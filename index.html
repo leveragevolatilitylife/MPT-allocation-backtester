@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>動態 MPT 資產配置回測平台</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>window.XLSX || document.write('<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"><\/script>');</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>window.Chart || document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>');</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+TC:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#0E1116;
+    --panel:#161A21;
+    --panel-2:#1D222B;
+    --border:#293040;
+    --text:#E7EAEE;
+    --text-dim:#8B93A3;
+    --text-faint:#5B6472;
+    --teal:#45C4A0;
+    --coral:#E8685E;
+    --amber:#D9A54B;
+    --blue:#5B9BD9;
+    --mono:'IBM Plex Mono', monospace;
+    --sans:'IBM Plex Sans','IBM Plex Sans TC',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  ::selection{background:var(--teal);color:#0E1116;}
+
+  #app{display:flex;min-height:100vh;}
+
+  /* ---------- SIDEBAR ---------- */
+  #sidebar{
+    width:340px;min-width:340px;background:var(--panel);
+    border-right:1px solid var(--border);padding:22px 20px 60px;
+    overflow-y:auto;height:100vh;position:sticky;top:0;
+  }
+  .brand{display:flex;flex-direction:column;gap:2px;margin-bottom:22px;}
+  .brand .mark{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--teal);}
+  .brand h1{font-size:17px;font-weight:600;margin:2px 0 0;line-height:1.35;}
+  .brand p{font-size:12px;color:var(--text-dim);margin:6px 0 0;line-height:1.5;}
+
+  .side-section{margin-top:22px;padding-top:18px;border-top:1px solid var(--border);}
+  .side-section h2{font-size:12px;font-weight:600;color:var(--text-dim);margin:0 0 12px;display:flex;align-items:center;gap:6px;}
+  .side-section h2 .num{font-family:var(--mono);color:var(--amber);}
+
+  .drop{
+    border:1px dashed var(--border);border-radius:6px;padding:16px 14px;
+    text-align:center;cursor:pointer;transition:.15s border-color;background:var(--panel-2);
+  }
+  .drop:hover{border-color:var(--teal);}
+  .drop.has-file{border-color:var(--teal);border-style:solid;}
+  .drop input{display:none;}
+  .drop .fname{font-family:var(--mono);font-size:11.5px;color:var(--teal);word-break:break-all;}
+  .drop .hint{font-size:11.5px;color:var(--text-dim);margin-top:4px;}
+
+  .data-status{font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5;}
+  .data-status .data-name{font-family:var(--mono);font-size:11px;color:var(--teal);word-break:break-all;}
+  .drop-compact{
+    display:inline-flex;align-items:center;gap:6px;width:auto;
+    padding:5px 11px;font-size:10.5px;border-radius:5px;
+    text-align:left;color:var(--text-dim);
+  }
+  .drop-compact:hover{color:var(--teal);}
+
+  label{display:block;font-size:12px;color:var(--text-dim);margin:12px 0 5px;}
+  select, input[type=number], input[type=text]{
+    width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+    padding:7px 9px;border-radius:5px;font-family:var(--mono);font-size:12.5px;
+  }
+  select:focus, input:focus{outline:none;border-color:var(--teal);}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .field-hint{font-size:10.5px;color:var(--text-faint);margin-top:3px;}
+
+  .strat-row{display:grid;grid-template-columns:1fr 62px 62px;gap:6px;align-items:center;margin-bottom:7px;}
+  .strat-row .sname{font-size:11.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .strat-row input{padding:5px 6px;font-size:11.5px;}
+  .strat-head{display:grid;grid-template-columns:1fr 62px 62px;gap:6px;font-size:10px;color:var(--text-faint);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;}
+
+  .picker-list{max-height:170px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--panel-2);margin-bottom:4px;}
+  .picker-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:var(--text);}
+  .picker-row input[type=checkbox]{accent-color:var(--teal);width:14px;height:14px;flex-shrink:0;}
+  .picker-row label{margin:0;font-size:12px;color:var(--text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mini-btn{background:none;border:1px solid var(--border);color:var(--text-dim);font-size:10.5px;padding:2px 7px;border-radius:4px;cursor:pointer;margin-left:4px;}
+  .mini-btn:hover{color:var(--teal);border-color:var(--teal);}
+
+  .pool-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--text);}
+  .pool-empty{font-size:11px;color:var(--text-faint);padding:4px 2px;font-style:italic;}
+  .pool-btn{flex-shrink:0;width:20px;height:20px;line-height:18px;text-align:center;border-radius:5px;
+    border:1px solid var(--border);background:none;cursor:pointer;font-size:13px;font-weight:700;padding:0;}
+  .pool-btn.add{color:var(--teal);border-color:rgba(69,196,160,.4);}
+  .pool-btn.add:hover{background:rgba(69,196,160,.15);border-color:var(--teal);}
+  .pool-btn.remove{color:var(--coral);border-color:rgba(232,104,94,.4);}
+  .pool-btn.remove:hover{background:rgba(232,104,94,.15);border-color:var(--coral);}
+  .pool-label{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--text-faint);
+    text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px;}
+  .pool-label .cnt{font-family:var(--mono);color:var(--teal);}
+
+  .toggle-row{display:flex;align-items:center;justify-content:space-between;margin:12px 0;}
+  .toggle-row span{font-size:12px;color:var(--text);}
+  .switch{position:relative;width:36px;height:20px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;cursor:pointer;flex-shrink:0;}
+  .switch.on{background:rgba(69,196,160,.25);border-color:var(--teal);}
+  .switch::after{content:'';position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:50%;background:var(--text-faint);transition:.15s;}
+  .switch.on::after{left:17px;background:var(--teal);}
+
+  .warn{background:rgba(232,104,94,.1);border:1px solid rgba(232,104,94,.4);color:var(--coral);
+    font-size:11px;padding:8px 10px;border-radius:5px;margin-top:10px;line-height:1.5;}
+
+  .run-btn{
+    width:100%;margin-top:20px;padding:12px;border:none;border-radius:6px;
+    background:var(--teal);color:#0B1210;font-weight:600;font-size:13.5px;cursor:pointer;
+    letter-spacing:.01em;transition:.15s opacity;
+  }
+  .run-btn:hover{opacity:.88;}
+  .run-btn:disabled{background:var(--panel-2);color:var(--text-faint);cursor:not-allowed;}
+
+  /* ---------- MAIN ---------- */
+  #main{flex:1;min-width:0;padding:26px 32px 60px;}
+  .empty-state{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:70vh;max-width:560px;}
+  .empty-state .tag{font-family:var(--mono);font-size:11px;color:var(--amber);letter-spacing:.14em;margin-bottom:10px;}
+  .empty-state h2{font-size:26px;font-weight:600;margin:0 0 14px;line-height:1.4;}
+  .empty-state p{color:var(--text-dim);font-size:13.5px;line-height:1.8;margin:0 0 8px;}
+  .empty-state ol{color:var(--text-dim);font-size:13px;line-height:2;padding-left:18px;}
+
+  .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;flex-wrap:wrap;gap:12px;}
+  .topbar h2{font-size:19px;margin:0;font-weight:600;}
+  .topbar .meta{font-family:var(--mono);font-size:11.5px;color:var(--text-dim);margin-top:4px;}
+
+  .kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;}
+  .kpi{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:12px 14px;}
+  .kpi .l{font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;}
+  .kpi .v{font-family:var(--mono);font-size:19px;font-weight:600;margin-top:5px;}
+  .kpi .v.pos{color:var(--teal);}
+  .kpi .v.neg{color:var(--coral);}
+  .kpi .v.neu{color:var(--amber);}
+
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:20px;flex-wrap:wrap;}
+  .tab-btn{background:none;border:none;color:var(--text-dim);font-family:var(--sans);font-size:13px;
+    padding:9px 15px;cursor:pointer;border-bottom:2px solid transparent;}
+  .tab-btn.active{color:var(--text);border-bottom-color:var(--teal);}
+  .tab-btn:hover{color:var(--text);}
+
+  .tab-panel{display:none;}
+  .tab-panel.active{display:block;}
+
+  .panel-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px 20px;margin-bottom:18px;}
+  .panel-card h3{font-size:14px;font-weight:600;margin:0 0 4px;}
+  .panel-card .sub{font-size:11.5px;color:var(--text-dim);margin:0 0 14px;line-height:1.6;}
+  .chart-box{position:relative;height:300px;}
+  .chart-box.tall{height:400px;}
+  .chart-box.short{height:190px;}
+
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  @media(max-width:1000px){.grid-2,.grid-3{grid-template-columns:1fr;}}
+
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border);font-family:var(--mono);}
+  th:first-child,td:first-child{text-align:left;font-family:var(--sans);}
+  th{color:var(--text-dim);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
+  tbody tr:hover{background:var(--panel-2);}
+  td.pos{color:var(--teal);} td.neg{color:var(--coral);}
+
+  .heatmap-wrap{overflow-x:auto;}
+  .heatmap{display:grid;gap:2px;}
+  .hm-cell{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10.5px;
+    aspect-ratio:1;border-radius:2px;min-width:52px;}
+  .hm-label{font-size:10px;color:var(--text-dim);display:flex;align-items:center;padding:0 6px;font-family:var(--sans);}
+
+  .loading-overlay{position:fixed;inset:0;background:rgba(14,17,22,.86);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:50;}
+  .loading-overlay.show{display:flex;}
+  .spinner{width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .loading-overlay .msg{margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+
+  .legend-note{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-dim);margin-top:10px;}
+  .legend-note .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;}
+
+  .mc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  @media(max-width:1100px){.mc-grid{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:700px){.mc-grid{grid-template-columns:1fr;}}
+  .mc-card{background:var(--panel-2);border:1px solid var(--border);border-radius:7px;padding:12px;}
+  .mc-card h4{font-size:11.5px;margin:0 0 8px;font-weight:600;color:var(--text);}
+
+  .footnote{font-size:11px;color:var(--text-faint);line-height:1.7;margin-top:6px;}
+
+  .axis-toggle{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0;}
+  .axis-btn{background:var(--panel-2);border:none;color:var(--text-dim);font-family:var(--sans);
+    font-size:11.5px;padding:6px 12px;cursor:pointer;}
+  .axis-btn.active{background:rgba(69,196,160,.18);color:var(--teal);}
+  .axis-btn:not(:last-child){border-right:1px solid var(--border);}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="mark">MULTI-STRATEGY ALLOCATION LAB</div>
+      <h1>動態 MPT 資產配置<br>回測平台</h1>
+      <p>上傳策略日報酬 Excel，設定滾動優化參數，執行含過擬合檢驗與蒙地卡羅壓力測試的完整回測。</p>
+    </div>
+
+    <div class="side-section">
+      <h2><span class="num">01</span> 資料來源</h2>
+      <div class="data-status">目前資料：<span class="data-name" id="fnameLabel">載入中…</span></div>
+      <div class="drop drop-compact" id="dropZone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls">
+        <span>📤 上傳 / 更換 Excel</span>
+      </div>
+      <div class="field-hint">預設自動載入 multi_strategy_data.xlsx；想暫時用別份資料測試，可點上方按鈕上傳或拖曳 .xlsx 覆蓋（僅本次瀏覽有效，要更新預設資料請把新檔案上傳取代 GitHub repo 裡的 multi_strategy_data.xlsx）</div>
+
+      <div id="sheetPickers" style="display:none;">
+        <label>策略報酬率工作表</label>
+        <select id="dataSheetSel"></select>
+        <label>Benchmark 工作表</label>
+        <select id="bmSheetSel"></select>
+        <div class="field-hint" id="parseInfo"></div>
+        <div class="row2" id="dateRangeRow" style="display:none;">
+          <div>
+            <label>回測起始日</label>
+            <input type="date" id="p_startDate">
+          </div>
+          <div>
+            <label>回測結束日</label>
+            <input type="date" id="p_endDate">
+          </div>
+        </div>
+        <div class="field-hint">此區間為套用於整份資料的篩選範圍（含滾動回顧視窗），可縮小樣本觀察特定期間表現。</div>
+      </div>
+    </div>
+
+    <div class="side-section" id="pickerSection" style="display:none;">
+      <h2><span class="num">02</span> 選擇策略與 Benchmark</h2>
+
+      <label style="display:flex;justify-content:space-between;align-items:center;margin-top:0;">
+        <span>策略（點擊按鈕加入 / 移出組合）</span>
+        <span>
+          <button type="button" class="mini-btn" id="pickAllBtn">全部加入</button>
+          <button type="button" class="mini-btn" id="pickNoneBtn">全部移出</button>
+        </span>
+      </label>
+      <div class="pool-label"><span>可選策略池</span></div>
+      <div id="stratPoolAvail" class="picker-list"></div>
+      <div class="pool-label"><span>已加入資產配置組合</span><span class="cnt" id="stratSelCount">0</span></div>
+      <div id="stratPoolSelected" class="picker-list"></div>
+      <div class="warn" id="strategyPickerWarn" style="display:none;">⚠ 請至少加入一個策略</div>
+
+      <label style="margin-top:16px;">Benchmark（點擊按鈕加入 / 移出比較）</label>
+      <div class="pool-label"><span>可選 Benchmark</span></div>
+      <div id="bmPoolAvail" class="picker-list"></div>
+      <div class="pool-label"><span>已加入比較</span><span class="cnt" id="bmSelCount">0</span></div>
+      <div id="bmPoolSelected" class="picker-list"></div>
+      <div class="warn" id="benchmarkPickerWarn" style="display:none;">⚠ 請至少加入一個 Benchmark</div>
+    </div>
+
+    <div class="side-section" id="paramSection" style="display:none;">
+      <h2><span class="num">03</span> 回測核心參數</h2>
+      <div class="row2">
+        <div>
+          <label>年化交易日數</label>
+          <input type="number" id="p_tradingDays" value="250">
+        </div>
+        <div>
+          <label>無風險利率 (%)</label>
+          <input type="number" id="p_rf" value="1.5" step="0.1">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>滾動回顧視窗 (天)</label>
+          <input type="number" id="p_lookback" value="250">
+        </div>
+        <div>
+          <label>再平衡週期 (天)</label>
+          <input type="number" id="p_rebal" value="60">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>最大組合總槓桿</label>
+          <input type="number" id="p_maxlev" value="1.0" step="0.1">
+        </div>
+        <div>
+          <label>風險厭惡係數 λ</label>
+          <input type="number" id="p_lambda" value="1.0" step="0.1">
+        </div>
+      </div>
+      <div class="field-hint">槓桿以倍數表示：1.0 = 總持倉 100%。</div>
+    </div>
+
+    <div class="side-section" id="boundsSection" style="display:none;">
+      <h2><span class="num">04</span> 個別策略槓桿上下限</h2>
+      <div class="strat-head"><span>策略</span><span>下限</span><span>上限</span></div>
+      <div id="boundsRows"></div>
+      <div class="warn" id="boundsWarn" style="display:none;"></div>
+    </div>
+
+    <div class="side-section" id="advSection" style="display:none;">
+      <h2><span class="num">05</span> 進階檢驗模組</h2>
+      <div class="toggle-row">
+        <span>PBO / DSR 過擬合檢驗</span>
+        <div class="switch on" id="togPbo"></div>
+      </div>
+      <div class="toggle-row">
+        <span>蒙地卡羅未來壓力測試</span>
+        <div class="switch on" id="togMc"></div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>MC 模擬路徑數</label>
+          <input type="number" id="p_mcsims" value="1000" step="100">
+        </div>
+        <div>
+          <label>MC 模擬天數</label>
+          <input type="number" id="p_mchorizon" value="250" step="10">
+        </div>
+      </div>
+      <div class="field-hint">PBO/DSR 採 7×4 參數網格（回顧視窗 × λ）與 CSCV(S=10) 組合切割，計算量較大。</div>
+
+      <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+        <span>GK 護欄動態提領壓力測試</span>
+        <div class="switch on" id="togGk"></div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>初始資產（萬元）</label>
+          <input type="number" id="p_gk_portfolio" value="2000" step="100">
+        </div>
+        <div>
+          <label>初始提領率 (%)</label>
+          <input type="number" id="p_gk_wr" value="5" step="0.5">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>年通膨率 (%)</label>
+          <input type="number" id="p_gk_inflation" value="2.5" step="0.5">
+        </div>
+        <div>
+          <label>模擬退休年數</label>
+          <input type="number" id="p_gk_years" value="10" step="1">
+        </div>
+      </div>
+      <label>GK 模擬次數</label>
+      <input type="number" id="p_gk_sims" value="3000" step="500">
+      <div class="field-hint">護欄法則：實際提領率 &gt; 初始提領率×1.2 時減提 10%（資本保全）；&lt; 初始提領率×0.8 時加提 10%（繁榮法則）；資產跌破初始資產 50% 視為破產並停止提領。模擬以動態 MPT 歷史日報酬之對數常態年化參數驅動。</div>
+    </div>
+
+    <button class="run-btn" id="runBtn" style="display:none;">執行完整回測與風險分析</button>
+  </aside>
+
+  <main id="main">
+    <div class="empty-state" id="emptyState">
+      <div class="tag">GETTING STARTED</div>
+      <h2>先上傳策略日報酬 Excel，<br>開始建立你的配置回測。</h2>
+      <p>本平台會完整重現滾動視窗動態 MPT 優化、靜態 MPT 與等權重對照、PBO(CSCV) 與 DSR 可投性檢驗，以及蒙地卡羅未來壓力測試（7 大指標機率分佈）。</p>
+      <ol>
+        <li>左側「資料來源」上傳 .xlsx（第一欄為日期，其餘欄為各策略日報酬率）</li>
+        <li>選擇策略資料工作表與 Benchmark 工作表</li>
+        <li>設定滾動優化參數與各策略槓桿上下限</li>
+        <li>按下「執行完整回測與風險分析」</li>
+      </ol>
+    </div>
+
+    <div id="results" style="display:none;">
+      <div class="topbar">
+        <div>
+          <h2 id="resTitle">回測結果</h2>
+          <div class="meta" id="resMeta"></div>
+        </div>
+      </div>
+
+      <div class="kpi-strip" id="kpiStrip"></div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="overview">配置績效總覽</button>
+        <button class="tab-btn" data-tab="strategies">個別策略 / 相關性</button>
+        <button class="tab-btn" data-tab="pbo">過擬合檢驗 PBO / DSR</button>
+        <button class="tab-btn" data-tab="mc">蒙地卡羅壓力測試</button>
+        <button class="tab-btn" data-tab="gk">GK 動態提領分析</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-overview">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div>
+              <h3>累積淨值走勢</h3>
+              <p class="sub">動態 MPT vs 靜態 MPT vs 等權重無槓桿組合 vs Benchmark</p>
+            </div>
+            <div class="axis-toggle">
+              <button class="axis-btn active" data-scale="logarithmic">對數座標</button>
+              <button class="axis-btn" data-scale="linear">線性座標</button>
+            </div>
+          </div>
+          <div class="chart-box tall"><canvas id="eqChart"></canvas></div>
+        </div>
+        <div class="panel-card">
+          <h3>歷史動態潛在回撤曲線</h3>
+          <div class="chart-box"><canvas id="ddChart"></canvas></div>
+        </div>
+        <div class="grid-2">
+          <div class="panel-card">
+            <h3>動態 MPT 持倉權重演變</h3>
+            <div class="chart-box"><canvas id="weightChart"></canvas></div>
+          </div>
+          <div class="panel-card">
+            <h3>全歷史靜態 MPT 最優配置</h3>
+            <p class="sub">風險厭惡係數 λ 固定下的全樣本一次性優化權重</p>
+            <table id="staticTable"><thead><tr><th>策略</th><th>權重</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+        <div class="panel-card">
+          <h3>動態 MPT 再平衡歷史紀錄</h3>
+          <p class="sub" id="rebalSub">每次再平衡日期與當次求解出的各策略配置比例</p>
+          <div style="max-height:360px;overflow-y:auto;">
+            <table id="rebalTable"><thead><tr></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-strategies">
+        <div class="panel-card">
+          <h3>個別策略與 Benchmark 全期間幾何統計</h3>
+          <table id="strategyTable">
+            <thead><tr><th>名稱</th><th>CAGR</th><th>對數年化波動</th><th>MDD</th><th>潰瘍指數 UI</th><th>潰瘍績效 UPI</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel-card">
+          <h3>策略間歷史報酬相關係數矩陣</h3>
+          <div class="heatmap-wrap"><div class="heatmap" id="corrHeatmap"></div></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-pbo">
+        <div id="pboContent"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-mc">
+        <div id="mcContent"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-gk">
+        <div id="gkContent"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="msg" id="loadingMsg">計算中...</div>
+</div>
+
+<script>
+/* =====================================================================
+   MATH & STATS UTILITIES
+   ===================================================================== */
+function mean(arr){ let s=0; for(let i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; }
+function std(arr){
+  const n=arr.length; if(n<=1) return 0;
+  const m=mean(arr); let ss=0; for(let i=0;i<n;i++) ss+=(arr[i]-m)*(arr[i]-m);
+  return Math.sqrt(ss/(n-1));
+}
+function skewness(arr){
+  const n=arr.length, m=mean(arr);
+  let m2=0,m3=0;
+  for(let i=0;i<n;i++){ const d=arr[i]-m; m2+=d*d; m3+=d*d*d; }
+  m2/=n; m3/=n;
+  return m3/Math.pow(m2,1.5);
+}
+function kurtosis(arr){
+  const n=arr.length, m=mean(arr);
+  let m2=0,m4=0;
+  for(let i=0;i<n;i++){ const d=arr[i]-m; m2+=d*d; m4+=d*d*d*d; }
+  m2/=n; m4/=n;
+  return m4/(m2*m2);
+}
+function erf(x){
+  const sign = x>=0?1:-1; x=Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t=1/(1+p*x);
+  const y=1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+  return sign*y;
+}
+function normcdf(x){ return 0.5*(1+erf(x/Math.SQRT2)); }
+function norminv(p){
+  if(p<=0) return -Infinity; if(p>=1) return Infinity;
+  const a=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00];
+  const b=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,6.680131188771972e+01,-1.328068155288572e+01];
+  const c=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,-2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00];
+  const d=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];
+  const pl=0.02425; let q,r;
+  if(p<pl){ q=Math.sqrt(-2*Math.log(p));
+    return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+  } else if(p<=1-pl){ q=p-0.5; r=q*q;
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  } else { q=Math.sqrt(-2*Math.log(1-p));
+    return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+  }
+}
+function percentile(arr,p){
+  const s=[...arr].sort((a,b)=>a-b);
+  const idx=(p/100)*(s.length-1);
+  const lo=Math.floor(idx), hi=Math.ceil(idx);
+  if(lo===hi) return s[lo];
+  return s[lo]+(s[hi]-s[lo])*(idx-lo);
+}
+function combinations(arr,k){
+  const res=[];
+  (function helper(start,combo){
+    if(combo.length===k){ res.push(combo.slice()); return; }
+    for(let i=start;i<arr.length;i++){ combo.push(arr[i]); helper(i+1,combo); combo.pop(); }
+  })(0,[]);
+  return res;
+}
+function mulberry32(a){
+  return function(){
+    let t=a+=0x6D2B79F5;
+    t=Math.imul(t^t>>>15, t|1);
+    t^=t+Math.imul(t^t>>>7, t|61);
+    return ((t^t>>>14)>>>0)/4294967296;
+  };
+}
+function gaussianRandom(rng){
+  let u=0,v=0;
+  while(u===0) u=rng(); while(v===0) v=rng();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+function histogram(data,nbins){
+  const mn=Math.min(...data), mx=Math.max(...data);
+  const width=(mx-mn)/nbins || 1e-9;
+  const counts=new Array(nbins).fill(0);
+  data.forEach(x=>{ let b=Math.floor((x-mn)/width); if(b>=nbins)b=nbins-1; if(b<0)b=0; counts[b]++; });
+  const centers=Array.from({length:nbins},(_,i)=>mn+width*(i+0.5));
+  const density=counts.map(c=>c/(data.length*width));
+  return {centers,density};
+}
+function kdeAt(data, points){
+  const n=data.length, s=std(data);
+  const h=(1.06*s*Math.pow(n,-1/5)) || 1e-6;
+  return points.map(x=>{
+    let sum=0;
+    for(let i=0;i<n;i++){ const z=(x-data[i])/h; sum+=Math.exp(-0.5*z*z); }
+    return sum/(n*h*Math.sqrt(2*Math.PI));
+  });
+}
+
+/* =====================================================================
+   MATRIX HELPERS
+   ===================================================================== */
+function matVec(A,v){ return A.map(row=>{ let s=0; for(let i=0;i<row.length;i++) s+=row[i]*v[i]; return s; }); }
+function meanVec(mat){
+  const T=mat.length, N=mat[0].length; const m=new Array(N).fill(0);
+  for(let j=0;j<N;j++){ let s=0; for(let i=0;i<T;i++) s+=mat[i][j]; m[j]=s/T; }
+  return m;
+}
+function covMatrix(mat){
+  const T=mat.length, N=mat[0].length;
+  const m=meanVec(mat);
+  const cov=Array.from({length:N},()=>new Array(N).fill(0));
+  for(let a=0;a<N;a++){
+    for(let b=a;b<N;b++){
+      let s=0;
+      for(let i=0;i<T;i++) s+=(mat[i][a]-m[a])*(mat[i][b]-m[b]);
+      const val = T>1 ? s/(T-1) : 0;
+      cov[a][b]=val; cov[b][a]=val;
+    }
+  }
+  return cov;
+}
+function corrMatrix(mat){
+  const cov=covMatrix(mat); const N=cov.length;
+  const sd=cov.map((row,i)=>Math.sqrt(Math.max(row[i],1e-12)));
+  const corr=Array.from({length:N},()=>new Array(N).fill(0));
+  for(let a=0;a<N;a++) for(let b=0;b<N;b++) corr[a][b]=cov[a][b]/(sd[a]*sd[b]);
+  return corr;
+}
+
+/* =====================================================================
+   QUADRATIC PROGRAM SOLVER (projected accelerated gradient / FISTA)
+   minimize 0.5 w'Σw - (1/λ) μ'w   s.t. sum(w)=S,  lb<=w<=ub
+   ===================================================================== */
+function projectSumBox(v, lb, ub, S){
+  let lo=Math.min(...v.map((x,i)=>x-ub[i]))-1;
+  let hi=Math.max(...v.map((x,i)=>x-lb[i]))+1;
+  for(let it=0; it<80; it++){
+    const mid=(lo+hi)/2;
+    let s=0;
+    for(let i=0;i<v.length;i++) s+=Math.min(Math.max(v[i]-mid,lb[i]),ub[i]);
+    if(s>S) lo=mid; else hi=mid;
+  }
+  const mid=(lo+hi)/2;
+  return v.map((x,i)=>Math.min(Math.max(x-mid,lb[i]),ub[i]));
+}
+function powerIterMaxEig(A){
+  const n=A.length; let v=new Array(n).fill(1/Math.sqrt(n));
+  for(let it=0; it<60; it++){
+    const Av=matVec(A,v);
+    const norm=Math.sqrt(Av.reduce((a,b)=>a+b*b,0)) || 1;
+    v=Av.map(x=>x/norm);
+  }
+  const Av=matVec(A,v);
+  const num=v.reduce((a,x,i)=>a+x*Av[i],0);
+  const den=v.reduce((a,x)=>a+x*x,0) || 1;
+  return num/den;
+}
+function solveQP(mu, sigma, lb, ub, S, lambda){
+  const N=mu.length;
+  const sumLb=lb.reduce((a,b)=>a+b,0), sumUb=ub.reduce((a,b)=>a+b,0);
+  if(sumLb > S+1e-6 || sumUb < S-1e-6) return null;
+  let L=powerIterMaxEig(sigma); if(!(L>1e-8)) L=1e-8;
+  let w = projectSumBox(new Array(N).fill(S/N), lb, ub, S);
+  let y = w.slice(); let t=1;
+  for(let k=0;k<250;k++){
+    const Sy=matVec(sigma,y);
+    const grad=Sy.map((x,i)=>x-mu[i]/lambda);
+    let wNew=y.map((x,i)=>x-grad[i]/L);
+    wNew=projectSumBox(wNew, lb, ub, S);
+    const tNew=(1+Math.sqrt(1+4*t*t))/2;
+    const yNew=wNew.map((x,i)=>x+((t-1)/tNew)*(x-w[i]));
+    w=wNew; y=yNew; t=tNew;
+  }
+  return w;
+}
+
+/* =====================================================================
+   EXCEL PARSING
+   ===================================================================== */
+function excelSerialToDate(serial){
+  const utcDays=Math.floor(serial-25569);
+  return new Date(utcDays*86400*1000);
+}
+function dateCellToSerial(d){
+  // Excel 有時會把極小的數值儲存格誤格式化成日期/時間（例如 -0.0000685 顯示成
+  // 1899/12/29 23:59:54）。SheetJS 在 cellDates:true 下會把這種儲存格解析成 JS
+  // Date 物件；直接 Number(date) 會得到毫秒時間戳記（天文數字），因此改用 Excel
+  // 序列值反推回原本應有的微小數值。
+  return (d.getTime()/86400000) + 25569;
+}
+function parseSheetData(ws){
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1, raw:true, defval:null});
+  if(!rows.length) throw new Error('工作表無資料');
+  const header=rows[0];
+  const colIdx=[], names=[];
+  for(let c=1;c<header.length;c++){
+    const h=header[c];
+    if(h!==null && h!==undefined && String(h).trim()!==''){ colIdx.push(c); names.push(String(h)); }
+  }
+  const dates=[], mat=[];
+  let anomalyCount=0;
+  const anomalySamples=[];
+  for(let r=1;r<rows.length;r++){
+    const row=rows[r];
+    if(!row || row[0]===null || row[0]===undefined || row[0]==='') continue;
+    let d=row[0], dateObj;
+    if(d instanceof Date) dateObj=d;
+    else if(typeof d==='number') dateObj=excelSerialToDate(d);
+    else { dateObj=new Date(d); if(isNaN(dateObj)) continue; }
+    dates.push(dateObj);
+    mat.push(colIdx.map((c,ci)=>{
+      const v=row[c];
+      if(v===null||v===undefined||v===''){ return 0; }
+      if(v instanceof Date){
+        anomalyCount++;
+        if(anomalySamples.length<5) anomalySamples.push({date:dateObj, col:names[ci]});
+        return dateCellToSerial(v);
+      }
+      if(isNaN(v)) return 0;
+      return Number(v);
+    }));
+  }
+  if(dates.length>1 && dates[0].getTime()>dates[dates.length-1].getTime()){
+    dates.reverse(); mat.reverse();
+  }
+  return {dates, names, returns:mat, anomalyCount, anomalySamples};
+}
+
+/* =====================================================================
+   BACKTEST ENGINE
+   ===================================================================== */
+function runBacktest(returns, lookback, rebalPeriod, lambda, lb, ub, maxLev){
+  const T=returns.length, N=returns[0].length;
+  const numEval=T-lookback;
+  if(numEval<=1) throw new Error('滾動回顧視窗超過資料長度，請縮小視窗');
+  const dyn=new Array(numEval).fill(0), sta=new Array(numEval).fill(0), ew=new Array(numEval).fill(0);
+  const wHistDyn=Array.from({length:numEval},()=>new Array(N).fill(0));
+  const rebalanceLog=[];
+
+  const muFull=meanVec(returns), sigmaFull=covMatrix(returns);
+  let wStatic=solveQP(muFull, sigmaFull, lb, ub, maxLev, lambda);
+  if(!wStatic) wStatic=new Array(N).fill(maxLev/N);
+
+  let curDyn=new Array(N).fill(maxLev/N);
+  let curSta=wStatic.slice();
+  let curEw=new Array(N).fill(1/N);
+
+  for(let i=lookback;i<T;i++){
+    const idx=i-lookback;
+    if(idx % rebalPeriod===0){
+      const win=returns.slice(i-lookback,i);
+      const mu=meanVec(win), sigma=covMatrix(win);
+      const wOpt=solveQP(mu, sigma, lb, ub, maxLev, lambda);
+      if(wOpt) curDyn=wOpt;
+      curSta=wStatic.slice();
+      curEw=new Array(N).fill(1/N);
+      rebalanceLog.push({idx, weights:curDyn.slice(), solved: !!wOpt});
+    }
+    const today=returns[i];
+    wHistDyn[idx]=curDyn.slice();
+    let rDyn=0, rSta=0, rEw=0;
+    for(let j=0;j<N;j++){ rDyn+=curDyn[j]*today[j]; rSta+=curSta[j]*today[j]; rEw+=curEw[j]*today[j]; }
+    dyn[idx]=rDyn; sta[idx]=rSta; ew[idx]=rEw;
+    curDyn=curDyn.map((w,j)=>w*(1+today[j])/(1+rDyn));
+    curSta=curSta.map((w,j)=>w*(1+today[j])/(1+rSta));
+    curEw=curEw.map((w,j)=>w*(1+today[j])/(1+rEw));
+  }
+  return {dyn, sta, ew, wHistDyn, wStatic, numEval, rebalanceLog};
+}
+
+function runFastBacktest(returns, winLen, lambda, rebalPeriod, maxLev, lb, ub, maxLookbackAlign){
+  const T=returns.length, N=lb.length;
+  const outLen=T-maxLookbackAlign;
+  const p=new Array(outLen).fill(0);
+  let curW=new Array(N).fill(maxLev/N);
+  for(let i=maxLookbackAlign;i<T;i++){
+    const idx=i-maxLookbackAlign;
+    if(idx % rebalPeriod===0){
+      const start=i-winLen;
+      const win=returns.slice(start,i);
+      const mu=meanVec(win), sigma=covMatrix(win);
+      const wOpt=solveQP(mu, sigma, lb, ub, maxLev, lambda);
+      if(wOpt) curW=wOpt;
+    }
+    const today=returns[i];
+    let r=0; for(let j=0;j<N;j++) r+=curW[j]*today[j];
+    p[idx]=r;
+    curW=curW.map((w,j)=>w*(1+today[j])/(1+r));
+  }
+  return p;
+}
+
+/* =====================================================================
+   METRICS
+   ===================================================================== */
+function mddCurve(equity){
+  let runMax=-Infinity; const dd=new Array(equity.length);
+  for(let i=0;i<equity.length;i++){ runMax=Math.max(runMax,equity[i]); dd[i]=(equity[i]-runMax)/runMax; }
+  const mdd=Math.abs(Math.min(...dd));
+  return {mdd, dd};
+}
+function computeMetrics(returnsArr, tradingDays, riskFree){
+  const T=returnsArr.length;
+  const equity=new Array(T); let c=1;
+  for(let i=0;i<T;i++){ c*=(1+returnsArr[i]); equity[i]=c; }
+  const cagr=Math.pow(equity[T-1], tradingDays/T)-1;
+  const logRets=returnsArr.map(r=>Math.log(1+r));
+  const vol=std(logRets)*Math.sqrt(tradingDays);
+  const {mdd, dd}=mddCurve(equity);
+  const ui=Math.sqrt(dd.reduce((s,x)=>s+x*x,0)/dd.length);
+  const upi= ui>0 ? (cagr-riskFree)/ui : 0;
+  const sharpe= vol>0 ? (cagr-riskFree)/vol : 0;
+  const downside=returnsArr.filter(r=>r<0);
+  const downsideStd= downside.length>1 ? std(downside)*Math.sqrt(tradingDays) : 1e-6;
+  const sortino=(cagr-riskFree)/downsideStd;
+  const calmar= mdd>0 ? cagr/mdd : 0;
+  return {equity, cagr, vol, mdd, dd, ui, upi, sharpe, sortino, calmar};
+}
+function sharpeOfSlice(arr, tradingDays){
+  const s=std(arr); if(s===0) return 0;
+  return mean(arr)/s*Math.sqrt(tradingDays);
+}
+
+/* =====================================================================
+   PBO (CSCV) + DSR
+   ===================================================================== */
+function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProgress){
+  const lookbackGrid=[20,60,120,180,250,360,480];
+  const lambdaGrid=[0.5,1,2,3];
+  const grid=[];
+  lambdaGrid.forEach(l=>lookbackGrid.forEach(w=>grid.push([w,l])));
+  const numTrials=grid.length;
+  const maxLookback=Math.max(...lookbackGrid);
+  const T=returns.length;
+  const Tpbo=T-maxLookback;
+  if(Tpbo<50) throw new Error('資料長度不足以執行 PBO/DSR 網格檢驗（需大於 480 個交易日以上）');
+
+  const trials=grid.map((g,i)=>{
+    if(onProgress) onProgress(`PBO 網格回測 ${i+1}/${numTrials}`);
+    return runFastBacktest(returns, g[0], g[1], rebalPeriod, maxLev, lb, ub, maxLookback);
+  });
+
+  const S=10;
+  const blockSize=Math.floor(Tpbo/S);
+  const trimmedT=blockSize*S;
+  const R=trials.map(col=>col.slice(0,trimmedT));
+  const blockIdx=Array.from({length:S},(_,b)=>Array.from({length:blockSize},(_,k)=>b*blockSize+k));
+  const allBlocks=[0,1,2,3,4,5,6,7,8,9];
+  const combos=combinations(allBlocks, S/2);
+  const logits=[];
+  combos.forEach(isBlocks=>{
+    const isSet=new Set(isBlocks);
+    const oosBlocks=allBlocks.filter(b=>!isSet.has(b));
+    const isIdx=isBlocks.flatMap(b=>blockIdx[b]);
+    const oosIdx=oosBlocks.flatMap(b=>blockIdx[b]);
+    const isSharpes=R.map(col=>sharpeOfSlice(isIdx.map(i=>col[i]), tradingDays));
+    const oosSharpes=R.map(col=>sharpeOfSlice(oosIdx.map(i=>col[i]), tradingDays));
+    let bestP=0, bestV=-Infinity;
+    isSharpes.forEach((v,i)=>{ if(v>bestV){bestV=v;bestP=i;} });
+    const bestOos=oosSharpes[bestP];
+    const rank=oosSharpes.filter(v=>v<=bestOos).length/(numTrials+1);
+    const rankAdj=Math.min(Math.max(rank,0.0001),0.9999);
+    logits.push(Math.log(rankAdj/(1-rankAdj)));
+  });
+  const pboVal=logits.filter(l=>l<=0).length/combos.length;
+
+  const allSharpesAnn=trials.map(col=>sharpeOfSlice(col, tradingDays));
+  let bestIdx=0, bestSrAnn=-Infinity;
+  allSharpesAnn.forEach((v,i)=>{ if(v>bestSrAnn){bestSrAnn=v; bestIdx=i;} });
+  const bestRets=trials[bestIdx];
+  const sDaily=std(bestRets);
+  const srDaily= sDaily>0 ? mean(bestRets)/sDaily : 0;
+  const skew=skewness(bestRets), kurt=kurtosis(bestRets);
+  const TpboLen=bestRets.length;
+  const varSr=(1 - skew*srDaily + ((kurt-1)/4)*srDaily*srDaily) / Math.max(TpboLen-1,1);
+  const eGamma=0.5772156649;
+  let eMaxSr=0;
+  if(numTrials>1){
+    eMaxSr=Math.sqrt(Math.max(varSr,0)) * ((1-eGamma)*norminv(1-1/numTrials) + eGamma*norminv(1-1/(numTrials*Math.E)));
+  }
+  const dsrZ = Math.sqrt(varSr)>0 ? (srDaily-eMaxSr)/Math.sqrt(varSr) : 0;
+  const dsrP = 1-normcdf(dsrZ);
+
+  return {
+    pboVal, logits, numCombos:combos.length, numTrials, grid, bestIdx,
+    bestSrAnn, eMaxSrAnn: eMaxSr*Math.sqrt(tradingDays),
+    varSrAnn: varSr*tradingDays, dsrZ, dsrP
+  };
+}
+
+/* =====================================================================
+   MONTE CARLO
+   ===================================================================== */
+function runMonteCarlo(dynReturns, sims, horizon, tradingDays, riskFree, seed){
+  const logRets=dynReturns.map(r=>Math.log(1+r));
+  const mu=mean(logRets), sigma=std(logRets);
+  const rng=mulberry32(seed||42);
+  const metrics={cagr:[],vol:[],mdd:[],sharpe:[],sortino:[],ui:[],upi:[]};
+  const sampleEquities=[];
+  for(let s=0;s<sims;s++){
+    const rets=new Array(horizon);
+    let eq=1; const eqPath=new Array(horizon+1); eqPath[0]=1;
+    for(let d=0;d<horizon;d++){
+      const z=gaussianRandom(rng);
+      const lr=mu+sigma*z;
+      const r=Math.exp(lr)-1;
+      rets[d]=r; eq*=(1+r); eqPath[d+1]=eq;
+    }
+    const cagr=Math.pow(eq, tradingDays/horizon)-1;
+    const vol=std(rets.map(r=>Math.log(1+r)))*Math.sqrt(tradingDays);
+    const {mdd, dd}=mddCurve(eqPath);
+    const ui=Math.sqrt(dd.reduce((a,x)=>a+x*x,0)/dd.length);
+    const sharpe= vol>0 ? (cagr-riskFree)/vol : 0;
+    const downside=rets.filter(r=>r<0);
+    const downsideStd= downside.length>1 ? std(downside)*Math.sqrt(tradingDays) : 1e-6;
+    const sortino=(cagr-riskFree)/downsideStd;
+    const upi= ui>0 ? (cagr-riskFree)/ui : 0;
+    metrics.cagr.push(cagr); metrics.vol.push(vol); metrics.mdd.push(mdd);
+    metrics.sharpe.push(sharpe); metrics.sortino.push(sortino);
+    metrics.ui.push(ui); metrics.upi.push(upi);
+    if(s<50) sampleEquities.push(eqPath);
+  }
+  return {metrics, sampleEquities, horizon};
+}
+
+/* =====================================================================
+   GK (GUYTON-KLINGER) 動態提領蒙地卡羅壓力測試
+   ===================================================================== */
+function runGKWithdrawal(dynReturns, params, tradingDays, seed){
+  const {initialPortfolio, initWithdrawRate, inflationRate, retireYears, mcSims,
+         upperGuardRatio, lowerGuardRatio, adjustStep, ruinThresholdRatio} = params;
+  const logRets=dynReturns.map(r=>Math.log(1+r));
+  const muAnnual=mean(logRets)*tradingDays;
+  const sigmaAnnual=std(logRets)*Math.sqrt(tradingDays);
+  const ruinValue=initialPortfolio*ruinThresholdRatio;
+  const rng=mulberry32(seed||42);
+
+  const portfolioStart=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
+  const portfolioEnd=Array.from({length:retireYears+1},()=>new Array(mcSims).fill(0));
+  const withdrawArr=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
+  const actualWrArr=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
+  const ruleArr=Array.from({length:retireYears},()=>new Array(mcSims).fill(''));
+  const annualRetArr=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
+
+  for(let s=0;s<mcSims;s++) portfolioEnd[0][s]=initialPortfolio;
+
+  for(let s=0;s<mcSims;s++){
+    const annualRets=new Array(retireYears);
+    for(let y=0;y<retireYears;y++){
+      const z=gaussianRandom(rng);
+      annualRets[y]=Math.exp(muAnnual+sigmaAnnual*z)-1;
+    }
+    let prevWithdraw=initialPortfolio*initWithdrawRate;
+    let ruined=false;
+    for(let y=0;y<retireYears;y++){
+      const currentAssets=portfolioEnd[y][s];
+      portfolioStart[y][s]=currentAssets;
+      annualRetArr[y][s]=annualRets[y];
+
+      if(ruined || currentAssets<ruinValue){
+        ruined=true;
+        portfolioEnd[y+1][s]=currentAssets;
+        withdrawArr[y][s]=0; actualWrArr[y][s]=0; ruleArr[y][s]='觸發破產(資產低於門檻)';
+        continue;
+      }
+
+      let baseWithdraw, ruleStr;
+      if(y===0){ baseWithdraw=prevWithdraw; ruleStr='初始提領'; }
+      else{
+        const lastYearRet=annualRets[y-1];
+        if(lastYearRet<0){ baseWithdraw=prevWithdraw; ruleStr='跳過通膨(前一年負報酬)'; }
+        else{ baseWithdraw=prevWithdraw*(1+inflationRate); ruleStr='通膨調整'; }
+      }
+
+      const currentWr=baseWithdraw/currentAssets;
+      let actualWithdraw=baseWithdraw;
+      if(currentWr>(initWithdrawRate*upperGuardRatio) && currentAssets<initialPortfolio){
+        actualWithdraw=baseWithdraw*(1-adjustStep); ruleStr+=' / 資本保全(-10%)';
+      } else if(currentWr<(initWithdrawRate*lowerGuardRatio)){
+        actualWithdraw=baseWithdraw*(1+adjustStep); ruleStr+=' / 繁榮法則(+10%)';
+      }
+      actualWithdraw=Math.min(actualWithdraw, currentAssets);
+      const actualWrFinal=actualWithdraw/currentAssets;
+
+      withdrawArr[y][s]=actualWithdraw;
+      actualWrArr[y][s]=actualWrFinal*100;
+      ruleArr[y][s]=ruleStr;
+
+      const assetsAfter=currentAssets-actualWithdraw;
+      portfolioEnd[y+1][s]=assetsAfter*(1+annualRets[y]);
+      prevWithdraw=actualWithdraw;
+    }
+  }
+
+  let ruinCount=0;
+  for(let s=0;s<mcSims;s++){
+    let minVal=Infinity;
+    for(let y=0;y<=retireYears;y++) minVal=Math.min(minVal, portfolioEnd[y][s]);
+    if(minVal<ruinValue) ruinCount++;
+  }
+  const ruinRate=ruinCount/mcSims*100;
+
+  const finalAssets=portfolioEnd[retireYears];
+  const sortedIdx=finalAssets.map((v,i)=>i).sort((a,b)=>finalAssets[a]-finalAssets[b]);
+  function pickIdx(p){
+    let k=Math.round(p*mcSims)-1;
+    k=Math.max(0, Math.min(mcSims-1,k));
+    return sortedIdx[k];
+  }
+  const idxP01=pickIdx(0.001), idxP50=pickIdx(0.50), idxP95=pickIdx(0.95);
+
+  function buildScenario(idx){
+    const years=Array.from({length:retireYears},(_,i)=>i+1);
+    return {
+      years,
+      assetStart: years.map((_,y)=>portfolioStart[y][idx]),
+      assetEnd: years.map((_,y)=>portfolioEnd[y+1][idx]),
+      withdraw: years.map((_,y)=>withdrawArr[y][idx]),
+      wr: years.map((_,y)=>actualWrArr[y][idx]),
+      rule: years.map((_,y)=>ruleArr[y][idx]),
+      ret: years.map((_,y)=>annualRetArr[y][idx]*100),
+      finalAsset: finalAssets[idx]
+    };
+  }
+
+  return {
+    ruinRate, ruinValue, initialPortfolio, retireYears, mcSims,
+    scenarioP95: buildScenario(idxP95),
+    scenarioP50: buildScenario(idxP50),
+    scenarioP01: buildScenario(idxP01)
+  };
+}
+
+/* =====================================================================
+   FORMATTERS
+   ===================================================================== */
+const fmtPct=(x,d=2)=> (x*100).toFixed(d)+'%';
+const fmtNum=(x,d=2)=> x.toFixed(d);
+const fmtDate=(d)=> d.toISOString().slice(0,10);
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+let state={
+  dataSheetName:null, bmSheetName:null,
+  parsedData:null, parsedBm:null,
+  workbook:null,
+  strategyNames:[]
+};
+
+/* =====================================================================
+   UI WIRING — FILE UPLOAD
+   ===================================================================== */
+const dropZone=document.getElementById('dropZone');
+const fileInput=document.getElementById('fileInput');
+dropZone.addEventListener('click', ()=>fileInput.click());
+dropZone.addEventListener('dragover', e=>{ e.preventDefault(); dropZone.style.borderColor='var(--teal)'; });
+dropZone.addEventListener('dragleave', ()=>{ dropZone.style.borderColor=''; });
+dropZone.addEventListener('drop', e=>{
+  e.preventDefault();
+  if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e=>{ if(e.target.files.length) handleFile(e.target.files[0]); });
+
+function loadWorkbookFromArrayBuffer(buf, label){
+  try{
+    const data=new Uint8Array(buf);
+    const wb=XLSX.read(data,{type:'array', cellDates:true});
+    state.workbook=wb;
+    document.getElementById('fnameLabel').textContent=label;
+    dropZone.classList.add('has-file');
+    populateSheetPickers(wb.SheetNames);
+    return true;
+  }catch(err){
+    alert('讀取 Excel 失敗：'+err.message);
+    return false;
+  }
+}
+
+function handleFile(file){
+  const reader=new FileReader();
+  reader.onload=(e)=> loadWorkbookFromArrayBuffer(e.target.result, file.name+'（本次上傳，重新整理頁面會還原預設資料）');
+  reader.readAsArrayBuffer(file);
+}
+
+/* 自動載入與本頁同目錄的預設資料（部署到 GitHub 後，更新 repo 裡的
+   multi_strategy_data.xlsx 即可更新網站預設顯示的資料，不需要改程式碼） */
+const DEFAULT_DATA_URL='multi_strategy_data.xlsx';
+function loadDefaultDataset(){
+  fetch(DEFAULT_DATA_URL, {cache:'no-store'})
+    .then(res=>{
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      return res.arrayBuffer();
+    })
+    .then(buf=>{ loadWorkbookFromArrayBuffer(buf, DEFAULT_DATA_URL+'（預設資料）'); })
+    .catch(err=>{
+      console.warn('預設資料載入失敗，請手動上傳 Excel：', err);
+      document.getElementById('fnameLabel').textContent='尚未載入（請上傳 .xlsx）';
+    });
+}
+loadDefaultDataset();
+
+function populateSheetPickers(sheetNames){
+  const dataSel=document.getElementById('dataSheetSel');
+  const bmSel=document.getElementById('bmSheetSel');
+  dataSel.innerHTML=''; bmSel.innerHTML='';
+  sheetNames.forEach(name=>{
+    const o1=document.createElement('option'); o1.value=name; o1.textContent=name; dataSel.appendChild(o1);
+    const o2=document.createElement('option'); o2.value=name; o2.textContent=name; bmSel.appendChild(o2);
+  });
+  const dataGuess=sheetNames.find(n=>/^strateg/i.test(n.trim())) || sheetNames.find(n=>!/benchmark/i.test(n)) || sheetNames[0];
+  const bmGuess=sheetNames.find(n=>/^benchmark/i.test(n.trim())) || sheetNames.find(n=>/benchmark/i.test(n)) || sheetNames[sheetNames.length-1];
+  dataSel.value=dataGuess; bmSel.value=bmGuess;
+  document.getElementById('sheetPickers').style.display='block';
+  tryParseSheets();
+  dataSel.addEventListener('change', tryParseSheets);
+  bmSel.addEventListener('change', tryParseSheets);
+}
+
+function tryParseSheets(){
+  try{
+    const dataName=document.getElementById('dataSheetSel').value;
+    const bmName=document.getElementById('bmSheetSel').value;
+    const ws=state.workbook.Sheets[dataName];
+    const wsBm=state.workbook.Sheets[bmName];
+    const parsed=parseSheetData(ws);
+    const parsedBm=parseSheetData(wsBm);
+    if(parsed.names.length<1) throw new Error('策略資料工作表未偵測到任何報酬率欄位');
+    state.parsedData=parsed; state.parsedBm=parsedBm;
+    state.strategyNames=parsed.names;
+    let infoMsg=`已解析 ${parsed.returns.length} 個交易日、${parsed.names.length} 個策略（${fmtDate(parsed.dates[0])} 至 ${fmtDate(parsed.dates[parsed.dates.length-1])}）`;
+    const totalAnomalies=(parsed.anomalyCount||0)+(parsedBm.anomalyCount||0);
+    if(totalAnomalies>0){
+      const samples=[...parsed.anomalySamples, ...parsedBm.anomalySamples].slice(0,3)
+        .map(a=>`${fmtDate(a.date)}「${a.col}」`).join('、');
+      infoMsg += `　⚠ 偵測到 ${totalAnomalies} 筆儲存格被 Excel 誤格式化成日期/時間，已自動還原為數值（例：${samples}）`;
+      document.getElementById('parseInfo').style.color='var(--amber)';
+    } else {
+      document.getElementById('parseInfo').style.color='';
+    }
+    document.getElementById('parseInfo').textContent=infoMsg;
+    setDateRangeDefaults(parsed.dates);
+    buildStrategyPicker(parsed.names);
+    buildBenchmarkPicker(parsedBm.names);
+    refreshSelectionState();
+    document.getElementById('pickerSection').style.display='block';
+    document.getElementById('paramSection').style.display='block';
+    document.getElementById('boundsSection').style.display='block';
+    document.getElementById('advSection').style.display='block';
+    document.getElementById('runBtn').style.display='block';
+  }catch(err){
+    document.getElementById('parseInfo').textContent='解析失敗：'+err.message;
+  }
+}
+
+/* ---- dual-pool (加入/移出按鈕) picker state ---- */
+const stratPoolState={names:[], selected:[]};
+const bmPoolState={names:[], selected:[]};
+
+function buildPoolRows(container, items, kind){
+  if(items.length===0){
+    container.innerHTML=`<div class="pool-empty">（${kind==='add'?'全部已加入':'尚未加入任何項目'}）</div>`;
+    return;
+  }
+  container.innerHTML=items.map(it=>`
+    <div class="picker-row">
+      <button type="button" class="pool-btn ${kind}" data-idx="${it.i}" title="${kind==='add'?'加入':'移出'}">${kind==='add'?'＋':'－'}</button>
+      <span class="pool-name" title="${it.name}">${it.name}</span>
+    </div>`).join('');
+}
+
+function renderStrategyPools(){
+  const selSet=new Set(stratPoolState.selected);
+  const avail=stratPoolState.names.map((name,i)=>({name,i})).filter(o=>!selSet.has(o.i));
+  const sel=stratPoolState.selected.map(i=>({name:stratPoolState.names[i], i}));
+  const availEl=document.getElementById('stratPoolAvail');
+  const selEl=document.getElementById('stratPoolSelected');
+  buildPoolRows(availEl, avail, 'add');
+  buildPoolRows(selEl, sel, 'remove');
+  document.getElementById('stratSelCount').textContent=sel.length;
+  availEl.querySelectorAll('.pool-btn.add').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx=parseInt(btn.dataset.idx,10);
+      if(!stratPoolState.selected.includes(idx)) stratPoolState.selected.push(idx);
+      renderStrategyPools();
+      refreshSelectionState();
+    });
+  });
+  selEl.querySelectorAll('.pool-btn.remove').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx=parseInt(btn.dataset.idx,10);
+      stratPoolState.selected=stratPoolState.selected.filter(x=>x!==idx);
+      renderStrategyPools();
+      refreshSelectionState();
+    });
+  });
+}
+
+function buildStrategyPicker(names){
+  stratPoolState.names=names;
+  stratPoolState.selected=names.map((_,i)=>i); // 預設全部加入
+  renderStrategyPools();
+}
+
+function getSelectedStrategies(){
+  const indices=stratPoolState.selected.slice();
+  const names=indices.map(i=>stratPoolState.names[i]);
+  return {indices, names};
+}
+
+function renderBenchmarkPools(){
+  const selSet=new Set(bmPoolState.selected);
+  const avail=bmPoolState.names.map((name,i)=>({name,i})).filter(o=>!selSet.has(o.i));
+  const sel=bmPoolState.selected.map(i=>({name:bmPoolState.names[i], i}));
+  const availEl=document.getElementById('bmPoolAvail');
+  const selEl=document.getElementById('bmPoolSelected');
+  buildPoolRows(availEl, avail, 'add');
+  buildPoolRows(selEl, sel, 'remove');
+  document.getElementById('bmSelCount').textContent=sel.length;
+  availEl.querySelectorAll('.pool-btn.add').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx=parseInt(btn.dataset.idx,10);
+      if(!bmPoolState.selected.includes(idx)) bmPoolState.selected.push(idx);
+      renderBenchmarkPools();
+      refreshSelectionState();
+    });
+  });
+  selEl.querySelectorAll('.pool-btn.remove').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx=parseInt(btn.dataset.idx,10);
+      bmPoolState.selected=bmPoolState.selected.filter(x=>x!==idx);
+      renderBenchmarkPools();
+      refreshSelectionState();
+    });
+  });
+}
+
+function buildBenchmarkPicker(names){
+  bmPoolState.names=names;
+  bmPoolState.selected=names.length? [0] : []; // 預設加入第一個 Benchmark
+  renderBenchmarkPools();
+}
+
+function getSelectedBenchmarks(){
+  const indices=bmPoolState.selected.slice();
+  const names=indices.map(i=>bmPoolState.names[i]);
+  return {indices, names};
+}
+
+function refreshSelectionState(){
+  const {names:stratNames}=getSelectedStrategies();
+  const {names:bmNames}=getSelectedBenchmarks();
+  const stratWarn=document.getElementById('strategyPickerWarn');
+  const bmWarn=document.getElementById('benchmarkPickerWarn');
+  const runBtn=document.getElementById('runBtn');
+  let ok=true;
+  if(stratNames.length<1){
+    stratWarn.style.display='block';
+    document.getElementById('boundsRows').innerHTML='';
+    ok=false;
+  } else {
+    stratWarn.style.display='none';
+    buildBoundsUI(stratNames);
+  }
+  if(bmNames.length<1){
+    bmWarn.style.display='block';
+    ok=false;
+  } else {
+    bmWarn.style.display='none';
+  }
+  runBtn.disabled=!ok;
+}
+
+document.getElementById('pickAllBtn').addEventListener('click', ()=>{
+  stratPoolState.selected=stratPoolState.names.map((_,i)=>i);
+  renderStrategyPools();
+  refreshSelectionState();
+});
+document.getElementById('pickNoneBtn').addEventListener('click', ()=>{
+  stratPoolState.selected=[];
+  renderStrategyPools();
+  refreshSelectionState();
+});
+
+function setDateRangeDefaults(dates){
+  const minD=dates[0], maxD=dates[dates.length-1];
+  const toStr=d=>d.toISOString().slice(0,10);
+  const startInput=document.getElementById('p_startDate');
+  const endInput=document.getElementById('p_endDate');
+  startInput.min=toStr(minD); startInput.max=toStr(maxD);
+  endInput.min=toStr(minD); endInput.max=toStr(maxD);
+  startInput.value=toStr(minD); endInput.value=toStr(maxD);
+  document.getElementById('dateRangeRow').style.display='grid';
+}
+
+function filterByDateRange(dates, mat, start, end){
+  const fDates=[], fMat=[];
+  for(let i=0;i<dates.length;i++){
+    if(dates[i]>=start && dates[i]<=end){ fDates.push(dates[i]); fMat.push(mat[i]); }
+  }
+  return {dates:fDates, returns:fMat};
+}
+
+function buildBoundsUI(names){
+  const wrap=document.getElementById('boundsRows');
+  wrap.innerHTML='';
+  const maxLev=parseFloat(document.getElementById('p_maxlev').value)||1;
+  const defaultUb=Math.min(1, Math.max(0.3, maxLev/names.length + 0.15));
+  const defaultLb=0;
+  names.forEach((name,i)=>{
+    const row=document.createElement('div');
+    row.className='strat-row';
+    row.innerHTML=`<span class="sname" title="${name}">${name}</span>
+      <input type="number" step="0.05" value="${defaultLb}" id="lb_${i}">
+      <input type="number" step="0.05" value="${defaultUb.toFixed(2)}" id="ub_${i}">`;
+    wrap.appendChild(row);
+  });
+}
+
+/* toggles */
+function wireToggle(id){
+  const el=document.getElementById(id);
+  el.addEventListener('click', ()=> el.classList.toggle('on'));
+}
+wireToggle('togPbo'); wireToggle('togMc'); wireToggle('togGk');
+
+/* tabs */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* axis scale toggle for equity chart */
+let eqScaleMode='logarithmic';
+document.querySelectorAll('.axis-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.axis-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    eqScaleMode=btn.dataset.scale;
+    if(charts.eq){
+      charts.eq.options.scales.y.type=eqScaleMode;
+      charts.eq.update();
+    }
+  });
+});
+
+/* =====================================================================
+   RUN PIPELINE
+   ===================================================================== */
+let charts={};
+function destroyCharts(){ Object.values(charts).forEach(c=>c && c.destroy && c.destroy()); charts={}; }
+
+function setLoading(on, msg){
+  const ov=document.getElementById('loadingOverlay');
+  ov.classList.toggle('show', on);
+  if(msg) document.getElementById('loadingMsg').textContent=msg;
+}
+
+document.getElementById('runBtn').addEventListener('click', ()=>{
+  setLoading(true, '準備回測資料...');
+  setTimeout(runPipeline, 30);
+});
+
+function runPipeline(){
+  try{
+    const rawP=state.parsedData, rawB=state.parsedBm;
+    const startVal=document.getElementById('p_startDate').value;
+    const endVal=document.getElementById('p_endDate').value;
+    if(!startVal || !endVal) throw new Error('請選擇回測起始日與結束日');
+    const startDate=new Date(startVal+'T00:00:00Z');
+    const endDate=new Date(endVal+'T23:59:59Z');
+    if(startDate>=endDate) throw new Error('起始日必須早於結束日');
+    const {indices:selIdx, names:selNames}=getSelectedStrategies();
+    if(selIdx.length<1) throw new Error('請至少加入一個策略納入資產配置組合');
+    const {indices:bmIdxArr, names:bmNames}=getSelectedBenchmarks();
+    if(bmIdxArr.length<1) throw new Error('請至少加入一個要比較的 Benchmark');
+
+    const filteredP=filterByDateRange(rawP.dates, rawP.returns, startDate, endDate);
+    const filteredB=filterByDateRange(rawB.dates, rawB.returns, startDate, endDate);
+    if(filteredP.returns.length<10) throw new Error('所選期間資料筆數過少，請放寬日期範圍');
+    const P={
+      names: selNames,
+      dates: filteredP.dates,
+      returns: filteredP.returns.map(row=>selIdx.map(i=>row[i]))
+    };
+    const B={
+      names: bmNames,
+      dates: filteredB.dates,
+      returns: filteredB.returns.map(row=>bmIdxArr.map(i=>row[i]))
+    };
+    const N=P.names.length;
+    const lb=[], ub=[];
+    let boundsWarnMsg='';
+    for(let i=0;i<N;i++){
+      lb.push(parseFloat(document.getElementById('lb_'+i).value)||0);
+      ub.push(parseFloat(document.getElementById('ub_'+i).value)||0);
+    }
+    const tradingDays=parseFloat(document.getElementById('p_tradingDays').value)||250;
+    const riskFree=(parseFloat(document.getElementById('p_rf').value)||0)/100;
+    const lookback=parseInt(document.getElementById('p_lookback').value)||250;
+    const rebal=parseInt(document.getElementById('p_rebal').value)||60;
+    const maxLev=parseFloat(document.getElementById('p_maxlev').value)||1;
+    const lambda=parseFloat(document.getElementById('p_lambda').value)||1;
+    const sumLb=lb.reduce((a,b)=>a+b,0), sumUb=ub.reduce((a,b)=>a+b,0);
+
+    const warnEl=document.getElementById('boundsWarn');
+    if(sumLb>maxLev+1e-6 || sumUb<maxLev-1e-6){
+      warnEl.style.display='block';
+      warnEl.textContent=`⚠ 下限總和 ${sumLb.toFixed(2)} / 上限總和 ${sumUb.toFixed(2)} 與最大總槓桿 ${maxLev.toFixed(2)} 不相容，優化在無解時將自動退回等權重。`;
+    } else { warnEl.style.display='none'; }
+
+    const returns=P.returns;
+
+    setLoading(true, '執行動態 / 靜態 / 等權重滾動回測...');
+    const bt=runBacktest(returns, lookback, rebal, lambda, lb, ub, maxLev);
+
+    const dynMetrics=computeMetrics(bt.dyn, tradingDays, riskFree);
+    const staMetrics=computeMetrics(bt.sta, tradingDays, riskFree);
+    const ewMetrics=computeMetrics(bt.ew, tradingDays, riskFree);
+
+    const evalStartIdx=P.returns.length-bt.numEval;
+    const evalDates=P.dates.slice(evalStartIdx);
+
+    const bmList = B.names.map((name,j)=>{
+      const slice=B.returns.slice(Math.max(0, B.returns.length-bt.numEval)).map(r=>r[j]);
+      const metrics = slice.length>1 ? computeMetrics(slice, tradingDays, riskFree) : null;
+      return {name, slice, metrics};
+    }).filter(b=>b.metrics);
+
+    const corr=corrMatrix(returns);
+
+    const stratStats=P.names.map((name,i)=>{
+      const col=returns.map(r=>r[i]);
+      return {name, ...computeMetrics(col, tradingDays, riskFree)};
+    });
+
+    let pboResult=null;
+    if(document.getElementById('togPbo').classList.contains('on')){
+      pboResult=computePBODSR(returns, lb, ub, rebal, maxLev, tradingDays, (m)=>setLoading(true,m));
+    }
+
+    let mcResult=null;
+    if(document.getElementById('togMc').classList.contains('on')){
+      setLoading(true, '執行蒙地卡羅未來壓力測試...');
+      const sims=parseInt(document.getElementById('p_mcsims').value)||1000;
+      const horizon=parseInt(document.getElementById('p_mchorizon').value)||250;
+      mcResult=runMonteCarlo(bt.dyn, sims, horizon, tradingDays, riskFree, 42);
+    }
+
+    let gkResult=null;
+    if(document.getElementById('togGk').classList.contains('on')){
+      setLoading(true, '執行 GK 護欄動態提領壓力測試...');
+      const gkParams={
+        initialPortfolio: (parseFloat(document.getElementById('p_gk_portfolio').value)||2000)*10000,
+        initWithdrawRate: (parseFloat(document.getElementById('p_gk_wr').value)||5)/100,
+        inflationRate: (parseFloat(document.getElementById('p_gk_inflation').value)||2.5)/100,
+        retireYears: parseInt(document.getElementById('p_gk_years').value)||10,
+        mcSims: parseInt(document.getElementById('p_gk_sims').value)||3000,
+        upperGuardRatio: 1.20, lowerGuardRatio: 0.80, adjustStep: 0.10, ruinThresholdRatio: 0.50
+      };
+      gkResult=runGKWithdrawal(bt.dyn, gkParams, tradingDays, 42);
+    }
+
+    renderResults({
+      P, B, bt, dynMetrics, staMetrics, ewMetrics, bmList,
+      evalDates, corr, stratStats, pboResult, mcResult, gkResult,
+      tradingDays, riskFree, lookback, rebal, maxLev, lambda
+    });
+
+    setLoading(false);
+    document.getElementById('emptyState').style.display='none';
+    document.getElementById('results').style.display='block';
+  }catch(err){
+    setLoading(false);
+    alert('計算失敗：'+err.message);
+    console.error(err);
+  }
+}
+
+/* =====================================================================
+   RENDERING
+   ===================================================================== */
+function kpiCard(label, value, cls){
+  return `<div class="kpi"><div class="l">${label}</div><div class="v ${cls||''}">${value}</div></div>`;
+}
+
+function renderResults(ctx){
+  destroyCharts();
+  const {P,B,bt,dynMetrics,staMetrics,ewMetrics,bmList,evalDates,corr,stratStats,pboResult,mcResult,tradingDays,riskFree,lookback,rebal,maxLev,lambda}=ctx;
+
+  document.getElementById('resTitle').textContent=`${P.names.length} 策略動態配置回測結果`;
+  document.getElementById('resMeta').textContent=
+    `評估期間 ${fmtDate(evalDates[0])} 至 ${fmtDate(evalDates[evalDates.length-1])} ・ 回顧視窗 ${lookback} 天 ・ 再平衡週期 ${rebal} 天 ・ λ=${lambda} ・ 總槓桿上限 ${maxLev}`;
+
+  const kpis=[
+    kpiCard('動態 MPT CAGR', fmtPct(dynMetrics.cagr), dynMetrics.cagr>=0?'pos':'neg'),
+    kpiCard('動態 MPT Sharpe', fmtNum(dynMetrics.sharpe), 'neu'),
+    kpiCard('動態 MPT MDD', fmtPct(dynMetrics.mdd), 'neg'),
+    kpiCard('動態 MPT UPI', fmtNum(dynMetrics.upi), 'neu'),
+  ];
+  bmList.forEach(b=> kpis.push(kpiCard(b.name+' CAGR', fmtPct(b.metrics.cagr), b.metrics.cagr>=0?'pos':'neg')));
+  if(pboResult) kpis.push(kpiCard('PBO 過擬合機率', fmtPct(pboResult.pboVal,1), pboResult.pboVal<0.3?'pos':'neg'));
+  if(pboResult) kpis.push(kpiCard('DSR p-value', fmtNum(pboResult.dsrP,4), pboResult.dsrP<0.05?'pos':'neg'));
+  document.getElementById('kpiStrip').innerHTML=kpis.join('');
+
+  renderOverviewTab(ctx);
+  renderStrategiesTab(ctx);
+  renderPboTab(ctx);
+  renderMcTab(ctx);
+  renderGkTab(ctx);
+}
+
+function chartDefaults(){
+  Chart.defaults.font.family="'IBM Plex Mono', monospace";
+  Chart.defaults.font.size=10.5;
+  Chart.defaults.color='#8B93A3';
+}
+chartDefaults();
+
+const percentileLinePlugin={
+  id:'percentileLines',
+  afterDatasetsDraw(chart, args, opts){
+    if(!opts || !opts.lines) return;
+    const {ctx, chartArea, scales}=chart;
+    const xScale=scales.x;
+    ctx.save();
+    opts.lines.forEach(line=>{
+      const xPix=xScale.getPixelForValue(line.value);
+      if(xPix<chartArea.left || xPix>chartArea.right) return;
+      ctx.beginPath();
+      ctx.strokeStyle=line.color;
+      ctx.lineWidth=1.4;
+      ctx.setLineDash(line.dash||[]);
+      ctx.moveTo(xPix, chartArea.top);
+      ctx.lineTo(xPix, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=line.color;
+      ctx.font="9.5px 'IBM Plex Mono', monospace";
+      ctx.fillText(line.label, Math.min(xPix+3, chartArea.right-70), chartArea.top+10+(line.labelOffset||0));
+    });
+    ctx.restore();
+  }
+};
+Chart.register(percentileLinePlugin);
+
+const bmPalette=['#8B93A3','#C9896B','#6BA3C9','#A3C96B','#C96BAE','#C9C16B'];
+
+function renderOverviewTab(ctx){
+  const {bt,dynMetrics,staMetrics,ewMetrics,bmList,evalDates,P,B}=ctx;
+  const labels=evalDates.map(d=>fmtDate(d));
+
+  charts.eq=new Chart(document.getElementById('eqChart'), {
+    type:'line',
+    data:{ labels, datasets:[
+      {label:'動態 MPT', data:dynMetrics.equity, borderColor:'#45C4A0', borderWidth:2, pointRadius:0},
+      {label:'靜態 MPT', data:staMetrics.equity, borderColor:'#D9A54B', borderWidth:1.3, pointRadius:0},
+      {label:'等權重配置', data:ewMetrics.equity, borderColor:'#5B9BD9', borderWidth:1.1, pointRadius:0},
+      ...bmList.map((b,j)=>({label:b.name, data:b.metrics.equity, borderColor:bmPalette[j%bmPalette.length], borderWidth:1, pointRadius:0}))
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      scales:{
+        x:{ticks:{maxTicksLimit:10, color:'#5B6472'}, grid:{color:'#1D222B'}},
+        y:{type:eqScaleMode, ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}}
+      },
+      plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12}}}
+    }
+  });
+
+  charts.dd=new Chart(document.getElementById('ddChart'), {
+    type:'line',
+    data:{ labels, datasets:[
+      {label:'動態 MPT', data:dynMetrics.dd.map(x=>x*100), borderColor:'#45C4A0', borderWidth:1.6, pointRadius:0, fill:false},
+      {label:'靜態 MPT', data:staMetrics.dd.map(x=>x*100), borderColor:'#D9A54B', borderWidth:1, pointRadius:0, fill:false},
+      {label:'等權重配置', data:ewMetrics.dd.map(x=>x*100), borderColor:'#5B9BD9', borderWidth:1, pointRadius:0, fill:false},
+      ...bmList.map((b,j)=>({label:b.name, data:b.metrics.dd.map(x=>x*100), borderColor:bmPalette[j%bmPalette.length], borderWidth:1, pointRadius:0, fill:false}))
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      scales:{ x:{ticks:{maxTicksLimit:10,color:'#5B6472'}, grid:{color:'#1D222B'}},
+               y:{ticks:{color:'#5B6472', callback:v=>v+'%'}, grid:{color:'#1D222B'}} },
+      plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12}}}
+    }
+  });
+
+  const palette=['#45C4A0','#D9A54B','#5B9BD9','#E8685E','#B583E0','#7FD1D1','#E0A9C5','#9CCB6B'];
+  charts.weight=new Chart(document.getElementById('weightChart'), {
+    type:'line',
+    data:{ labels, datasets: P.names.map((name,i)=>({
+      label:name, data:bt.wHistDyn.map(w=>w[i]*100),
+      borderColor:palette[i%palette.length], backgroundColor:palette[i%palette.length]+'55',
+      borderWidth:1, pointRadius:0, fill:true
+    })) },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      scales:{ x:{ticks:{maxTicksLimit:8,color:'#5B6472'}, grid:{display:false}},
+               y:{stacked:true, ticks:{color:'#5B6472', callback:v=>v+'%'}, grid:{color:'#1D222B'}} },
+      plugins:{legend:{position:'bottom', labels:{color:'#E7EAEE', boxWidth:10, font:{size:10}}}}
+    }
+  });
+
+  const staTbody=document.querySelector('#staticTable tbody');
+  staTbody.innerHTML=P.names.map((name,i)=>`<tr><td>${name}</td><td>${fmtPct(bt.wStatic[i])}</td></tr>`).join('');
+
+  renderRebalanceTable(bt, evalDates, P.names);
+}
+
+function renderRebalanceTable(bt, evalDates, names){
+  const thead=document.querySelector('#rebalTable thead tr');
+  const tbody=document.querySelector('#rebalTable tbody');
+  thead.innerHTML='<th>#</th><th>再平衡日期</th>'+names.map(n=>`<th>${n}</th>`).join('')+'<th>總槓桿</th>';
+  const log=bt.rebalanceLog;
+  document.getElementById('rebalSub').textContent=
+    `每次再平衡日期與當次求解出的各策略配置比例（共 ${log.length} 次再平衡）`;
+  tbody.innerHTML=log.map((r,k)=>{
+    const total=r.weights.reduce((a,b)=>a+b,0);
+    const cells=r.weights.map(w=>`<td>${fmtPct(w,1)}</td>`).join('');
+    const rowStyle=r.solved? '' : ' style="color:var(--coral);"';
+    const note=r.solved? '' : ' title="此次優化無可行解，沿用前次配置"';
+    return `<tr${rowStyle}${note}><td>${k+1}</td><td>${fmtDate(evalDates[r.idx])}</td>${cells}<td>${fmtPct(total,1)}</td></tr>`;
+  }).join('');
+}
+
+function renderStrategiesTab(ctx){
+  const {stratStats,bmList,corr,P,B}=ctx;
+  const tbody=document.querySelector('#strategyTable tbody');
+  let rows=stratStats.map(s=>`<tr><td>${s.name}</td>
+    <td class="${s.cagr>=0?'pos':'neg'}">${fmtPct(s.cagr)}</td>
+    <td>${fmtPct(s.vol)}</td>
+    <td class="neg">${fmtPct(s.mdd)}</td>
+    <td>${fmtPct(s.ui)}</td>
+    <td>${fmtNum(s.upi)}</td></tr>`).join('');
+  bmList.forEach(b=>{
+    rows+=`<tr style="color:var(--amber);"><td>${b.name}（Benchmark）</td>
+      <td class="${b.metrics.cagr>=0?'pos':'neg'}">${fmtPct(b.metrics.cagr)}</td>
+      <td>${fmtPct(b.metrics.vol)}</td>
+      <td class="neg">${fmtPct(b.metrics.mdd)}</td>
+      <td>${fmtPct(b.metrics.ui)}</td>
+      <td>${fmtNum(b.metrics.upi)}</td></tr>`;
+  });
+  tbody.innerHTML=rows;
+
+  const N=P.names.length;
+  const hm=document.getElementById('corrHeatmap');
+  hm.style.gridTemplateColumns=`110px repeat(${N},1fr)`;
+  let html='<div></div>'+P.names.map(n=>`<div class="hm-label" style="justify-content:center;text-align:center;">${n}</div>`).join('');
+  for(let a=0;a<N;a++){
+    html+=`<div class="hm-label">${P.names[a]}</div>`;
+    for(let b=0;b<N;b++){
+      const v=corr[a][b];
+      const color= v>=0 ? `rgba(69,196,160,${Math.abs(v)*0.85+0.1})` : `rgba(232,104,94,${Math.abs(v)*0.85+0.1})`;
+      html+=`<div class="hm-cell" style="background:${color};">${v.toFixed(2)}</div>`;
+    }
+  }
+  hm.innerHTML=html;
+}
+
+function renderPboTab(ctx){
+  const target=document.getElementById('pboContent');
+  const {pboResult}=ctx;
+  if(!pboResult){
+    target.innerHTML=`<div class="panel-card"><p class="sub">此次分析未啟用 PBO / DSR 過擬合檢驗（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
+    return;
+  }
+  target.innerHTML=`
+    <div class="grid-2">
+      <div class="panel-card">
+        <h3>PBO — 回測過擬合機率 (CSCV)</h3>
+        <p class="sub">${pboResult.numTrials} 組參數網格（回顧視窗 × λ）／${pboResult.numCombos} 組合切割樣本。Logit ≤ 0 代表樣本內最優在樣本外表現低於中位數，即為過擬合訊號。</p>
+        <div class="chart-box"><canvas id="pboChart"></canvas></div>
+        <div class="kpi-strip" style="margin-top:14px;grid-template-columns:1fr;">
+          ${kpiCard('PBO 過擬合機率', fmtPct(pboResult.pboVal,1), pboResult.pboVal<0.3?'pos':'neg')}
+        </div>
+      </div>
+      <div class="panel-card">
+        <h3>DSR — 縮減夏普比率檢定</h3>
+        <p class="sub">考慮多重測試、偏態與峰態後，最佳參數組合的夏普比率是否顯著優於零假設下的期望最大夏普比率。</p>
+        <div class="chart-box"><canvas id="dsrChart"></canvas></div>
+        <div class="kpi-strip" style="margin-top:14px;">
+          ${kpiCard('最佳年化 Sharpe', fmtNum(pboResult.bestSrAnn))}
+          ${kpiCard('E[Max Sharpe]', fmtNum(pboResult.eMaxSrAnn))}
+          ${kpiCard('DSR p-value', fmtNum(pboResult.dsrP,4), pboResult.dsrP<0.05?'pos':'neg')}
+        </div>
+      </div>
+    </div>`;
+
+  const hist=histogram(pboResult.logits, 18);
+  charts.pbo=new Chart(document.getElementById('pboChart'), {
+    type:'bar',
+    data:{ datasets:[{label:'Logit 機率密度', data:hist.centers.map((x,i)=>({x,y:hist.density[i]})), backgroundColor:'rgba(91,155,217,.55)', borderColor:'#5B9BD9', borderWidth:1}] },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{ x:{type:'linear', ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'Logit',color:'#8B93A3'}},
+               y:{ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}} },
+      plugins:{ legend:{display:false},
+        percentileLines:{ lines:[{value:0,color:'#E8685E',dash:[5,4],label:'Overfit ≤ 0'}] } }
+    }
+  });
+
+  const sdAnn=Math.sqrt(Math.max(pboResult.varSrAnn,1e-9));
+  const xMin=-1, xMax=Math.max(pboResult.bestSrAnn, pboResult.eMaxSrAnn)*1.6+1;
+  const xs=Array.from({length:160},(_,i)=>xMin+(xMax-xMin)*i/159);
+  const ys=xs.map(x=> (1/(sdAnn*Math.sqrt(2*Math.PI)))*Math.exp(-0.5*Math.pow((x-pboResult.eMaxSrAnn)/sdAnn,2)) );
+  charts.dsr=new Chart(document.getElementById('dsrChart'), {
+    type:'line',
+    data:{ datasets:[{label:'虛無假設分佈', data:xs.map((x,i)=>({x,y:ys[i]})), borderColor:'#E8685E', borderWidth:1.8, pointRadius:0, fill:false}] },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{ x:{type:'linear', ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'年化 Sharpe Ratio',color:'#8B93A3'}},
+               y:{ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}} },
+      plugins:{ legend:{display:false},
+        percentileLines:{ lines:[
+          {value:pboResult.bestSrAnn, color:'#5B9BD9', label:`最佳 ${pboResult.bestSrAnn.toFixed(2)}`},
+          {value:pboResult.eMaxSrAnn, color:'#8B93A3', dash:[4,3], label:`E[Max] ${pboResult.eMaxSrAnn.toFixed(2)}`, labelOffset:14}
+        ] } }
+    }
+  });
+}
+
+function renderMcTab(ctx){
+  const target=document.getElementById('mcContent');
+  const {mcResult, tradingDays}=ctx;
+  if(!mcResult){
+    target.innerHTML=`<div class="panel-card"><p class="sub">此次分析未啟用蒙地卡羅未來壓力測試（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
+    return;
+  }
+  const m=mcResult.metrics;
+  const specs=[
+    {key:'cagr', title:'年化報酬率 CAGR', pct:true, risk:false},
+    {key:'vol',  title:'年化標準差 (波動度)', pct:true, risk:true},
+    {key:'mdd',  title:'最大回撤 MDD', pct:true, risk:true},
+    {key:'sharpe', title:'夏普比率 Sharpe', pct:false, risk:false},
+    {key:'sortino', title:'索提諾比率 Sortino', pct:false, risk:false},
+    {key:'ui', title:'潰瘍指數 UI', pct:true, risk:true},
+    {key:'upi', title:'潰瘍績效指數 UPI', pct:false, risk:false},
+  ];
+
+  target.innerHTML=`
+    <div class="panel-card">
+      <h3>未來 1 年（${mcResult.horizon} 交易日）淨值路徑模擬</h3>
+      <p class="sub">基於動態 MPT 歷史日報酬之對數常態分佈假設，模擬 ${m.cagr.length} 條路徑（顯示前 50 條）。</p>
+      <div class="chart-box tall"><canvas id="mcPathChart"></canvas></div>
+    </div>
+    <div class="panel-card">
+      <h3>7 大績效與風險指標機率分佈</h3>
+      <p class="sub">報酬/效益類指標（CAGR, Sharpe, Sortino, UPI）數值越大越好，5% 分位為悲觀、95% 分位為樂觀；風險/損失類指標（波動度, MDD, UI）數值越小越好，5% 分位為樂觀、95% 分位為悲觀。</p>
+      <div class="mc-grid" id="mcGrid"></div>
+    </div>`;
+
+  const mcPathChart=document.getElementById('mcPathChart');
+  const xs=Array.from({length:mcResult.horizon+1},(_,i)=>i);
+  charts.mcPath=new Chart(mcPathChart, {
+    type:'line',
+    data:{ labels:xs,
+      datasets:[
+        ...mcResult.sampleEquities.map((path,i)=>({
+          data:path, borderColor:'rgba(139,147,163,.22)', borderWidth:1, pointRadius:0, fill:false, order:2
+        }))
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      scales:{ x:{ticks:{maxTicksLimit:10,color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'未來交易日',color:'#8B93A3'}},
+               y:{ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'預估淨值',color:'#8B93A3'}} },
+      plugins:{legend:{display:false}}
+    }
+  });
+
+  const grid=document.getElementById('mcGrid');
+  specs.forEach(spec=>{
+    const card=document.createElement('div');
+    card.className='mc-card';
+    const cid='mc_'+spec.key;
+    card.innerHTML=`<h4>${spec.title}</h4><div class="chart-box short"><canvas id="${cid}"></canvas></div>`;
+    grid.appendChild(card);
+  });
+
+  specs.forEach(spec=>{
+    const raw=m[spec.key];
+    const scaled= spec.pct ? raw.map(v=>v*100) : raw.slice();
+    const hist=histogram(scaled, 22);
+    const kde=kdeAt(scaled, hist.centers);
+    const p5=percentile(scaled,5), p50=percentile(scaled,50), p95=percentile(scaled,95);
+    const fmt=v=> spec.pct? v.toFixed(1)+'%' : v.toFixed(2);
+    const colorLow = spec.risk ? '#45C4A0' : '#E8685E';
+    const colorHigh = spec.risk ? '#E8685E' : '#45C4A0';
+    const lines=[
+      {value:p5, color:colorLow, label:`5% ${fmt(p5)}`},
+      {value:p50, color:'#5B9BD9', label:`中位 ${fmt(p50)}`, labelOffset:12},
+      {value:p95, color:colorHigh, label:`95% ${fmt(p95)}`, labelOffset:24}
+    ];
+    charts['mc_'+spec.key]=new Chart(document.getElementById('mc_'+spec.key), {
+      data:{ datasets:[
+        {type:'bar', label:'密度', data:hist.centers.map((x,i)=>({x,y:hist.density[i]})), backgroundColor:'rgba(217,165,75,.35)', borderColor:'rgba(217,165,75,.6)', borderWidth:1},
+        {type:'line', label:'KDE', data:hist.centers.map((x,i)=>({x,y:kde[i]})), borderColor:'#E7EAEE', borderWidth:1.4, pointRadius:0, fill:false}
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        scales:{ x:{type:'linear', ticks:{color:'#5B6472', maxTicksLimit:5, font:{size:9}}, grid:{color:'#1D222B'}},
+                 y:{ticks:{display:false}, grid:{color:'#1D222B'}} },
+        plugins:{ legend:{display:false}, percentileLines:{lines} }
+      }
+    });
+  });
+}
+
+function fmtTWD(v){ return Math.round(v).toLocaleString('zh-Hant'); }
+function fmtWan(v){ return (v/10000).toLocaleString('zh-Hant', {maximumFractionDigits:0}); }
+
+function renderGkScenario(canvasId, tbodyId, scenario, chartTitle){
+  if(charts[canvasId]) { charts[canvasId].destroy(); }
+  charts[canvasId]=new Chart(document.getElementById(canvasId), {
+    data:{
+      labels: scenario.years.map(y=>'第'+y+'年'),
+      datasets:[
+        {type:'bar', label:'年末資產（萬元）', data:scenario.assetEnd.map(v=>v/10000),
+          backgroundColor:'rgba(91,155,217,.55)', borderColor:'#5B9BD9', borderWidth:1, yAxisID:'y'},
+        {type:'line', label:'年度提領金額（萬元）', data:scenario.withdraw.map(v=>v/10000),
+          borderColor:'#E8685E', backgroundColor:'#E8685E', borderWidth:2, pointRadius:3, yAxisID:'y1'}
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      scales:{
+        x:{ticks:{color:'#5B6472'}, grid:{display:false}},
+        y:{position:'left', ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'年末資產（萬元）',color:'#8B93A3'}},
+        y1:{position:'right', ticks:{color:'#5B6472'}, grid:{display:false}, title:{display:true,text:'提領金額（萬元）',color:'#8B93A3'}}
+      },
+      plugins:{ legend:{labels:{color:'#E7EAEE', boxWidth:12}}, title:{display:true, text:chartTitle, color:'#E7EAEE', font:{size:12.5}} }
+    }
+  });
+
+  const tbody=document.getElementById(tbodyId);
+  tbody.innerHTML=scenario.years.map((y,i)=>{
+    const retCls = scenario.ret[i]>=0 ? 'pos' : 'neg';
+    return `<tr><td>第 ${y} 年</td>
+      <td>${fmtTWD(scenario.assetStart[i])}</td>
+      <td class="${retCls}">${scenario.ret[i].toFixed(2)}%</td>
+      <td>${fmtTWD(scenario.withdraw[i])}</td>
+      <td>${scenario.wr[i].toFixed(2)}%</td>
+      <td style="text-align:left;font-family:var(--sans);font-size:11px;color:var(--text-dim);">${scenario.rule[i]}</td>
+      <td>${fmtTWD(scenario.assetEnd[i])}</td></tr>`;
+  }).join('');
+}
+
+function renderGkTab(ctx){
+  const target=document.getElementById('gkContent');
+  const {gkResult}=ctx;
+  if(!gkResult){
+    target.innerHTML=`<div class="panel-card"><p class="sub">此次分析未啟用 GK 護欄動態提領壓力測試（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
+    return;
+  }
+  const g=gkResult;
+  target.innerHTML=`
+    <div class="panel-card">
+      <h3>GK 護欄退休提領模擬結果</h3>
+      <p class="sub">初始資產 ${fmtWan(g.initialPortfolio)} 萬元 ・ 模擬 ${g.retireYears} 年期 ・ ${g.mcSims.toLocaleString()} 次蒙地卡羅路徑 ・ 破產門檻：資產低於初始資產的 ${((g.ruinValue/g.initialPortfolio)*100).toFixed(0)}%（即 ${fmtWan(g.ruinValue)} 萬元）。護欄法則：實際提領率超過初始提領率 1.2 倍時減提 10%（資本保全）；低於 0.8 倍時加提 10%（繁榮法則）。</p>
+      <div class="kpi-strip" style="margin-bottom:0;">
+        ${kpiCard('觸發破產警戒率', g.ruinRate.toFixed(2)+'%', g.ruinRate<10?'pos':'neg')}
+        ${kpiCard('悲觀情境 PR0.1 期末資產', fmtWan(g.scenarioP01.finalAsset)+' 萬', 'neg')}
+        ${kpiCard('中位情境 PR50 期末資產', fmtWan(g.scenarioP50.finalAsset)+' 萬', 'neu')}
+        ${kpiCard('樂觀情境 PR95 期末資產', fmtWan(g.scenarioP95.finalAsset)+' 萬', 'pos')}
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <h3>中位情境（PR50）逐年提領走勢</h3>
+      <p class="sub">模擬路徑依期末資產排序後取第 50% 分位的路徑，呈現最具代表性的典型結果。</p>
+      <div class="chart-box tall"><canvas id="gkChartP50"></canvas></div>
+      <div style="max-height:320px;overflow-y:auto;margin-top:14px;">
+        <table id="gkTableP50">
+          <thead><tr><th>年度</th><th>年初資產</th><th>年度報酬</th><th>年提領金額</th><th>實際提領率</th><th>觸發法則</th><th>年末資產</th></tr></thead>
+          <tbody id="gkTableP50Body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <h3>悲觀情境（PR0.1）逐年提領走勢</h3>
+      <p class="sub">模擬路徑中最差的千分之一極端情境，用以檢視護欄法則在連續虧損下能否避免提前破產。</p>
+      <div class="chart-box tall"><canvas id="gkChartP01"></canvas></div>
+      <div style="max-height:320px;overflow-y:auto;margin-top:14px;">
+        <table id="gkTableP01">
+          <thead><tr><th>年度</th><th>年初資產</th><th>年度報酬</th><th>年提領金額</th><th>實際提領率</th><th>觸發法則</th><th>年末資產</th></tr></thead>
+          <tbody id="gkTableP01Body"></tbody>
+        </table>
+      </div>
+    </div>`;
+
+  renderGkScenario('gkChartP50','gkTableP50Body', g.scenarioP50, 'PR50 中位情境：年末資產 vs 提領金額');
+  renderGkScenario('gkChartP01','gkTableP01Body', g.scenarioP01, 'PR0.1 悲觀情境：年末資產 vs 提領金額');
+}
+</script>
+</body>
+</html>
