@@ -130,6 +130,10 @@
   .topbar .meta{font-family:var(--mono);font-size:11.5px;color:var(--text-dim);margin-top:4px;}
 
   .kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;}
+
+  .heatmap-table{border-collapse:separate;border-spacing:2px;font-size:11px;}
+  .heatmap-table th{color:var(--text-dim);font-weight:500;font-size:10.5px;padding:3px 6px;white-space:nowrap;}
+  .heatmap-table td{padding:5px 7px;color:#0E1116;font-weight:600;border-radius:3px;min-width:46px;}
   .kpi{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:12px 14px;}
   .kpi .l{font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;}
   .kpi .v{font-family:var(--mono);font-size:19px;font-weight:600;margin-top:5px;}
@@ -385,6 +389,19 @@
       </div>
 
       <div class="tab-panel active" id="tab-overview">
+        <div class="panel-card">
+          <h3>配置績效指標總表</h3>
+          <p class="sub">動態 MPT／靜態 MPT／等權重配置／各 Benchmark 的完整風險報酬指標對照</p>
+          <div style="overflow-x:auto;">
+            <table id="summaryTable">
+              <thead><tr>
+                <th>配置</th><th>CAGR</th><th>標準差</th><th>下行標準差</th><th>Sharpe</th>
+                <th>Sortino</th><th>MDD</th><th>Calmar</th><th>UI</th><th>UPI</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
         <div class="panel-card">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div>
@@ -768,7 +785,7 @@ function computeMetrics(returnsArr, tradingDays, riskFree){
   const downsideStd= downside.length>1 ? std(downside)*Math.sqrt(tradingDays) : 1e-6;
   const sortino=(cagr-riskFree)/downsideStd;
   const calmar= mdd>0 ? cagr/mdd : 0;
-  return {equity, cagr, vol, mdd, dd, ui, upi, sharpe, sortino, calmar};
+  return {equity, cagr, vol, mdd, dd, ui, upi, sharpe, sortino, calmar, downsideStd};
 }
 function sharpeOfSlice(arr, tradingDays){
   const s=std(arr); if(s===0) return 0;
@@ -1422,7 +1439,7 @@ function runPipeline(){
     renderResults({
       P, B, bt, dynMetrics, staMetrics, ewMetrics, bmList,
       evalDates, corr, stratStats, pboResult, mcResult, gkResult,
-      tradingDays, riskFree, lookback, rebal, maxLev, lambda
+      tradingDays, riskFree, lookback, rebal, maxLev, lambda, lb, ub
     });
 
     setLoading(false);
@@ -1504,9 +1521,34 @@ Chart.register(percentileLinePlugin);
 
 const bmPalette=['#8B93A3','#C9896B','#6BA3C9','#A3C96B','#C96BAE','#C9C16B'];
 
+function summaryRow(label, m, highlight){
+  return `<tr${highlight? ' style="color:var(--amber);"':''}><td>${label}</td>
+    <td class="${m.cagr>=0?'pos':'neg'}">${fmtPct(m.cagr)}</td>
+    <td>${fmtPct(m.vol)}</td>
+    <td>${fmtPct(m.downsideStd)}</td>
+    <td>${fmtNum(m.sharpe)}</td>
+    <td>${fmtNum(m.sortino)}</td>
+    <td class="neg">${fmtPct(m.mdd)}</td>
+    <td>${fmtNum(m.calmar)}</td>
+    <td>${fmtPct(m.ui)}</td>
+    <td>${fmtNum(m.upi)}</td></tr>`;
+}
+
+function renderSummaryTable(ctx){
+  const {dynMetrics,staMetrics,ewMetrics,bmList}=ctx;
+  let rows='';
+  rows+=summaryRow('動態 MPT', dynMetrics);
+  rows+=summaryRow('靜態 MPT', staMetrics);
+  rows+=summaryRow('等權重配置', ewMetrics);
+  bmList.forEach(b=> rows+=summaryRow(b.name+'（Benchmark）', b.metrics, true));
+  document.querySelector('#summaryTable tbody').innerHTML=rows;
+}
+
 function renderOverviewTab(ctx){
   const {bt,dynMetrics,staMetrics,ewMetrics,bmList,evalDates,P,B}=ctx;
   const labels=evalDates.map(d=>fmtDate(d));
+
+  renderSummaryTable(ctx);
 
   charts.eq=new Chart(document.getElementById('eqChart'), {
     type:'line',
@@ -1617,14 +1659,207 @@ function renderStrategiesTab(ctx){
   hm.innerHTML=html;
 }
 
+/* =====================================================================
+   PBO 分頁 — 參數敏感度二維熱圖（獨立於 CSCV/DSR 開關，點擊才執行）
+   ===================================================================== */
+function getAxisDefs(ctx){
+  const {P, lb, ub, maxLev}=ctx;
+  const defs=[
+    {id:'lookback', label:'回顧視窗（天）', min:60, max:500, round:true},
+    {id:'rebal', label:'再平衡週期（天）', min:20, max:120, round:true},
+    {id:'lambda', label:'λ 風險厭惡係數', min:0.3, max:3, round:false},
+    {id:'maxlev', label:'最大總槓桿', min:Math.max(0.2,maxLev*0.3), max:Math.max(1.5,maxLev*1.5), round:false},
+  ];
+  P.names.forEach((name,i)=>{
+    const curUb=ub[i]!=null? ub[i] : maxLev;
+    defs.push({id:'ub_'+i, label:name+'（槓桿上限）', min:0, max:Math.max(0.2,curUb*1.5), round:false, stratIdx:i});
+  });
+  return defs;
+}
+
+function heatmapPanelHtml(ctx){
+  const defs=getAxisDefs(ctx);
+  const opts=defs.map(d=>`<option value="${d.id}">${d.label}</option>`).join('');
+  return `
+    <div class="panel-card">
+      <h3>參數敏感度二維熱圖</h3>
+      <p class="sub">在兩個可調參數（回顧視窗／再平衡週期／λ／最大總槓桿／個別策略槓桿上限，可任選其二）之間做網格掃描，觀察目標指標是否在一大片區域都穩健，而非只在單一組合突出尖峰——後者正是過擬合的典型警訊。此分析獨立於上方 PBO/DSR 開關，點下方按鈕才會計算。</p>
+      <div class="row2">
+        <div>
+          <label>X 軸參數</label>
+          <select id="hmXAxis">${opts}</select>
+          <div class="row2" style="margin-top:6px;">
+            <input type="number" id="hmXMin" step="0.01" placeholder="最小值">
+            <input type="number" id="hmXMax" step="0.01" placeholder="最大值">
+          </div>
+        </div>
+        <div>
+          <label>Y 軸參數</label>
+          <select id="hmYAxis">${opts}</select>
+          <div class="row2" style="margin-top:6px;">
+            <input type="number" id="hmYMin" step="0.01" placeholder="最小值">
+            <input type="number" id="hmYMax" step="0.01" placeholder="最大值">
+          </div>
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>每軸網格點數</label>
+          <input type="number" id="hmSteps" value="6" min="3" max="12">
+        </div>
+        <div>
+          <label>目標指標</label>
+          <select id="hmMetric">
+            <option value="sharpe">Sharpe</option>
+            <option value="sortino">Sortino</option>
+            <option value="calmar">Calmar</option>
+            <option value="upi">UPI</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" class="run-btn" id="hmRunBtn" style="margin-top:10px;">執行參數掃描</button>
+      <div class="field-hint" id="hmInfo" style="margin-top:8px;"></div>
+      <div id="hmWrap" style="margin-top:14px;overflow-x:auto;"></div>
+    </div>`;
+}
+
+function initHeatmapPanel(ctx){
+  const defs=getAxisDefs(ctx);
+  const byId=id=>defs.find(d=>d.id===id);
+  const xSel=document.getElementById('hmXAxis'), ySel=document.getElementById('hmYAxis');
+  xSel.value=defs[0].id;
+  ySel.value=defs.length>1? defs[1].id : defs[0].id;
+  function applyDefaults(axisId, minEl, maxEl){
+    const d=byId(axisId); if(!d) return;
+    document.getElementById(minEl).value=d.round? Math.round(d.min) : d.min;
+    document.getElementById(maxEl).value=d.round? Math.round(d.max) : d.max;
+  }
+  applyDefaults(xSel.value,'hmXMin','hmXMax');
+  applyDefaults(ySel.value,'hmYMin','hmYMax');
+  xSel.addEventListener('change', ()=>applyDefaults(xSel.value,'hmXMin','hmXMax'));
+  ySel.addEventListener('change', ()=>applyDefaults(ySel.value,'hmYMin','hmYMax'));
+  document.getElementById('hmRunBtn').addEventListener('click', ()=>runHeatmapSweep(ctx, defs));
+}
+
+function buildAxisValues(min, max, steps, round){
+  const raw=[];
+  for(let i=0;i<steps;i++){
+    let v = steps===1? min : min + (max-min)*i/(steps-1);
+    if(round) v=Math.round(v);
+    raw.push(v);
+  }
+  return round? [...new Set(raw)] : raw;
+}
+
+function evalBacktestForParams(ctx, overrides){
+  const {P, lb, ub, rebal, maxLev, lambda, lookback, tradingDays, riskFree}=ctx;
+  let effLookback=lookback, effRebal=rebal, effLambda=lambda, effMaxLev=maxLev;
+  const effLb=lb.slice(), effUb=ub.slice();
+  Object.keys(overrides).forEach(axisId=>{
+    const v=overrides[axisId];
+    if(axisId==='lookback') effLookback=Math.max(5,Math.round(v));
+    else if(axisId==='rebal') effRebal=Math.max(1,Math.round(v));
+    else if(axisId==='lambda') effLambda=Math.max(1e-3,v);
+    else if(axisId==='maxlev') effMaxLev=v;
+    else if(axisId.startsWith('ub_')){
+      const i=parseInt(axisId.slice(3),10);
+      effUb[i]=v;
+      if(effLb[i]>v) effLb[i]=0; // 槓桿上限掃到低於原下限時，放寬下限避免必然無解
+    }
+  });
+  if(effLookback>=P.returns.length-5) return null;
+  const p=runFastBacktest(P.returns, effLookback, effLambda, effRebal, effMaxLev, effLb, effUb, effLookback);
+  if(!p || p.length<10) return null;
+  return computeMetrics(p, tradingDays, riskFree);
+}
+
+function heatColor(v, min, max){
+  if(!isFinite(v) || max<=min) return 'rgba(139,147,163,.18)';
+  const t=Math.max(0,Math.min(1,(v-min)/(max-min)));
+  let r,g,b;
+  if(t<0.5){
+    const k=t/0.5;
+    r=232+(217-232)*k; g=104+(165-104)*k; b=94+(75-94)*k;
+  } else {
+    const k=(t-0.5)/0.5;
+    r=217+(69-217)*k; g=165+(196-165)*k; b=75+(160-75)*k;
+  }
+  return `rgba(${r.toFixed(0)},${g.toFixed(0)},${b.toFixed(0)},.6)`;
+}
+
+function renderHeatmapTable(xVals, yVals, grid, xLabel, yLabel, minV, maxV){
+  let html=`<table class="heatmap-table"><thead><tr><th>${yLabel} ＼ ${xLabel}</th>`;
+  xVals.forEach(x=> html+=`<th>${fmtNum(x)}</th>`);
+  html+='</tr></thead><tbody>';
+  for(let yi=yVals.length-1; yi>=0; yi--){
+    html+=`<tr><th>${fmtNum(yVals[yi])}</th>`;
+    for(let xi=0;xi<xVals.length;xi++){
+      const v=grid[yi][xi];
+      const bg=heatColor(v,minV,maxV);
+      const label=isFinite(v)? v.toFixed(2) : '—';
+      html+=`<td style="background:${bg};text-align:center;" title="${xLabel}=${fmtNum(xVals[xi])}, ${yLabel}=${fmtNum(yVals[yi])}">${label}</td>`;
+    }
+    html+='</tr>';
+  }
+  html+='</tbody></table>';
+  document.getElementById('hmWrap').innerHTML=html;
+}
+
+function runHeatmapSweep(ctx, defs){
+  const xId=document.getElementById('hmXAxis').value;
+  const yId=document.getElementById('hmYAxis').value;
+  if(xId===yId){ alert('X 軸與 Y 軸請選擇不同的參數'); return; }
+  const xMin=parseFloat(document.getElementById('hmXMin').value);
+  const xMax=parseFloat(document.getElementById('hmXMax').value);
+  const yMin=parseFloat(document.getElementById('hmYMin').value);
+  const yMax=parseFloat(document.getElementById('hmYMax').value);
+  const steps=Math.max(3, Math.min(12, parseInt(document.getElementById('hmSteps').value,10)||6));
+  const metricKey=document.getElementById('hmMetric').value;
+  if([xMin,xMax,yMin,yMax].some(v=>!isFinite(v)) || xMin>=xMax || yMin>=yMax){
+    alert('請確認 X 軸／Y 軸的最小值必須小於最大值');
+    return;
+  }
+  const xDef=defs.find(d=>d.id===xId), yDef=defs.find(d=>d.id===yId);
+  const xVals=buildAxisValues(xMin,xMax,steps,xDef.round);
+  const yVals=buildAxisValues(yMin,yMax,steps,yDef.round);
+
+  document.getElementById('hmRunBtn').disabled=true;
+  document.getElementById('hmInfo').textContent=`執行中… 共 ${xVals.length*yVals.length} 組參數組合，請稍候`;
+  document.getElementById('hmWrap').innerHTML='';
+
+  setTimeout(()=>{
+    try{
+      const grid=[];
+      let minV=Infinity, maxV=-Infinity;
+      for(let yi=0; yi<yVals.length; yi++){
+        const row=[];
+        for(let xi=0; xi<xVals.length; xi++){
+          const overrides={}; overrides[xId]=xVals[xi]; overrides[yId]=yVals[yi];
+          const m=evalBacktestForParams(ctx, overrides);
+          const v=m? m[metricKey] : NaN;
+          if(isFinite(v)){ minV=Math.min(minV,v); maxV=Math.max(maxV,v); }
+          row.push(v);
+        }
+        grid.push(row);
+      }
+      renderHeatmapTable(xVals, yVals, grid, xDef.label, yDef.label, minV, maxV);
+      document.getElementById('hmInfo').textContent=
+        `完成：共 ${xVals.length*yVals.length} 組參數組合｜X＝${xDef.label}｜Y＝${yDef.label}｜目標指標＝${metricKey.toUpperCase()}｜顏色由珊瑚紅（較差）到青色（較佳）`;
+    }catch(err){
+      document.getElementById('hmInfo').textContent='掃描失敗：'+err.message;
+    }
+    document.getElementById('hmRunBtn').disabled=false;
+  }, 30);
+}
+
 function renderPboTab(ctx){
   const target=document.getElementById('pboContent');
   const {pboResult}=ctx;
+  let html='';
   if(!pboResult){
-    target.innerHTML=`<div class="panel-card"><p class="sub">此次分析未啟用 PBO / DSR 過擬合檢驗（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
-    return;
-  }
-  target.innerHTML=`
+    html=`<div class="panel-card"><p class="sub">此次分析未啟用 PBO / DSR 過擬合檢驗（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
+  } else {
+    html=`
     <div class="grid-2">
       <div class="panel-card">
         <h3>PBO — 回測過擬合機率 (CSCV)</h3>
@@ -1645,7 +1880,12 @@ function renderPboTab(ctx){
         </div>
       </div>
     </div>`;
+  }
+  html += heatmapPanelHtml(ctx);
+  target.innerHTML = html;
+  initHeatmapPanel(ctx);
 
+  if(!pboResult) return;
   const hist=histogram(pboResult.logits, 18);
   charts.pbo=new Chart(document.getElementById('pboChart'), {
     type:'bar',
