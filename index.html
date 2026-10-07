@@ -349,9 +349,15 @@
           <input type="number" id="p_gk_years" value="10" step="1">
         </div>
       </div>
+      <label>提領頻率</label>
+      <select id="p_gk_freq">
+        <option value="1">每年提領一次</option>
+        <option value="4">每季提領一次</option>
+        <option value="12">每月提領一次</option>
+      </select>
       <label>GK 模擬次數</label>
       <input type="number" id="p_gk_sims" value="3000" step="500">
-      <div class="field-hint">護欄法則：實際提領率 &gt; 初始提領率×1.2 時減提 10%（資本保全）；&lt; 初始提領率×0.8 時加提 10%（繁榮法則）；資產跌破初始資產 50% 視為破產並停止提領。模擬以動態 MPT 歷史日報酬之對數常態年化參數驅動。</div>
+      <div class="field-hint">護欄法則：實際提領率（換算年化）&gt; 初始提領率×1.2 時該次減提 10%（資本保全）；&lt; 初始提領率×0.8 時該次加提 10%（繁榮法則）；資產跌破初始資產 50% 視為破產並停止提領。通膨調整／跳過通膨仍按年判斷（依前一年實際報酬是否為負），每季/每月提領時每年只在年初重新定調提領基準，年中各期提領金額平均分攤。模擬以動態 MPT 歷史日報酬之對數常態年化參數驅動。</div>
     </div>
 
     <button class="run-btn" id="runBtn" style="display:none;">執行完整回測與風險分析</button>
@@ -900,12 +906,17 @@ function runMonteCarlo(dynReturns, sims, horizon, tradingDays, riskFree, seed){
 function runGKWithdrawal(dynReturns, params, tradingDays, seed){
   const {initialPortfolio, initWithdrawRate, inflationRate, retireYears, mcSims,
          upperGuardRatio, lowerGuardRatio, adjustStep, ruinThresholdRatio} = params;
+  const periodsPerYear=Math.max(1, params.periodsPerYear||1); // 1=每年 4=每季 12=每月
   const logRets=dynReturns.map(r=>Math.log(1+r));
   const muAnnual=mean(logRets)*tradingDays;
   const sigmaAnnual=std(logRets)*Math.sqrt(tradingDays);
+  const muPeriod=muAnnual/periodsPerYear;
+  const sigmaPeriod=sigmaAnnual/Math.sqrt(periodsPerYear);
   const ruinValue=initialPortfolio*ruinThresholdRatio;
   const rng=mulberry32(seed||42);
 
+  // 外部輸出（含下方 buildScenario 與圖表/表格渲染）維持以「年」為單位，
+  // 提領頻率只改變模擬內部每年把提領金額拆成幾次執行、護欄多久檢查一次。
   const portfolioStart=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
   const portfolioEnd=Array.from({length:retireYears+1},()=>new Array(mcSims).fill(0));
   const withdrawArr=Array.from({length:retireYears},()=>new Array(mcSims).fill(0));
@@ -916,50 +927,62 @@ function runGKWithdrawal(dynReturns, params, tradingDays, seed){
   for(let s=0;s<mcSims;s++) portfolioEnd[0][s]=initialPortfolio;
 
   for(let s=0;s<mcSims;s++){
-    const annualRets=new Array(retireYears);
-    for(let y=0;y<retireYears;y++){
-      const z=gaussianRandom(rng);
-      annualRets[y]=Math.exp(muAnnual+sigmaAnnual*z)-1;
-    }
-    let prevWithdraw=initialPortfolio*initWithdrawRate;
+    let annualTarget=initialPortfolio*initWithdrawRate; // 當年度提領基準（年度總額），通膨調整/跳過通膨以年為單位更新
     let ruined=false;
+    let currentAssets=initialPortfolio;
+    let prevYearRet=null; // 前一年實際（市場）報酬，用來決定本年度是否跳過通膨調整
+
     for(let y=0;y<retireYears;y++){
-      const currentAssets=portfolioEnd[y][s];
       portfolioStart[y][s]=currentAssets;
-      annualRetArr[y][s]=annualRets[y];
 
       if(ruined || currentAssets<ruinValue){
         ruined=true;
         portfolioEnd[y+1][s]=currentAssets;
-        withdrawArr[y][s]=0; actualWrArr[y][s]=0; ruleArr[y][s]='觸發破產(資產低於門檻)';
+        withdrawArr[y][s]=0; actualWrArr[y][s]=0; ruleArr[y][s]='觸發破產(資產低於門檻)'; annualRetArr[y][s]=0;
         continue;
       }
 
-      let baseWithdraw, ruleStr;
-      if(y===0){ baseWithdraw=prevWithdraw; ruleStr='初始提領'; }
-      else{
-        const lastYearRet=annualRets[y-1];
-        if(lastYearRet<0){ baseWithdraw=prevWithdraw; ruleStr='跳過通膨(前一年負報酬)'; }
-        else{ baseWithdraw=prevWithdraw*(1+inflationRate); ruleStr='通膨調整'; }
+      // 年初決定本年度提領基準：第一年為初始提領率；之後依前一年市場報酬決定通膨調整/跳過
+      let yearRuleStr;
+      if(y===0){ yearRuleStr='初始提領'; }
+      else if(prevYearRet<0){ yearRuleStr='跳過通膨(前一年負報酬)'; }
+      else{ annualTarget=annualTarget*(1+inflationRate); yearRuleStr='通膨調整'; }
+
+      const assetStartYear=currentAssets;
+      let yearWithdrawSum=0;
+      let yearGrowthFactor=1; // 僅市場報酬的複利，不含提領影響，對應原本逐年版本的 annualRets[y]
+      const guardLabels=new Set();
+      let yearRuined=false;
+
+      for(let p=0;p<periodsPerYear;p++){
+        if(yearRuined || currentAssets<ruinValue){ yearRuined=true; ruined=true; break; }
+
+        const z=gaussianRandom(rng);
+        const periodRet=Math.exp(muPeriod+sigmaPeriod*z)-1;
+
+        const periodBaseWithdraw=annualTarget/periodsPerYear;
+        const annualizedWr=(periodBaseWithdraw/currentAssets)*periodsPerYear;
+        let actualWithdraw=periodBaseWithdraw;
+        if(annualizedWr>(initWithdrawRate*upperGuardRatio) && currentAssets<initialPortfolio){
+          actualWithdraw=periodBaseWithdraw*(1-adjustStep); guardLabels.add('資本保全(-10%)');
+        } else if(annualizedWr<(initWithdrawRate*lowerGuardRatio)){
+          actualWithdraw=periodBaseWithdraw*(1+adjustStep); guardLabels.add('繁榮法則(+10%)');
+        }
+        actualWithdraw=Math.min(actualWithdraw, currentAssets);
+
+        yearWithdrawSum+=actualWithdraw;
+        const assetsAfter=currentAssets-actualWithdraw;
+        currentAssets=assetsAfter*(1+periodRet);
+        yearGrowthFactor*=(1+periodRet);
       }
 
-      const currentWr=baseWithdraw/currentAssets;
-      let actualWithdraw=baseWithdraw;
-      if(currentWr>(initWithdrawRate*upperGuardRatio) && currentAssets<initialPortfolio){
-        actualWithdraw=baseWithdraw*(1-adjustStep); ruleStr+=' / 資本保全(-10%)';
-      } else if(currentWr<(initWithdrawRate*lowerGuardRatio)){
-        actualWithdraw=baseWithdraw*(1+adjustStep); ruleStr+=' / 繁榮法則(+10%)';
-      }
-      actualWithdraw=Math.min(actualWithdraw, currentAssets);
-      const actualWrFinal=actualWithdraw/currentAssets;
+      withdrawArr[y][s]=yearWithdrawSum;
+      actualWrArr[y][s]= assetStartYear>0 ? (yearWithdrawSum/assetStartYear*100) : 0;
+      ruleArr[y][s]= guardLabels.size>0 ? (yearRuleStr+' / '+[...guardLabels].join('、')) : yearRuleStr;
+      annualRetArr[y][s]=(yearGrowthFactor-1);
+      prevYearRet=yearGrowthFactor-1;
 
-      withdrawArr[y][s]=actualWithdraw;
-      actualWrArr[y][s]=actualWrFinal*100;
-      ruleArr[y][s]=ruleStr;
-
-      const assetsAfter=currentAssets-actualWithdraw;
-      portfolioEnd[y+1][s]=assetsAfter*(1+annualRets[y]);
-      prevWithdraw=actualWithdraw;
+      portfolioEnd[y+1][s]=currentAssets;
     }
   }
 
@@ -995,7 +1018,7 @@ function runGKWithdrawal(dynReturns, params, tradingDays, seed){
   }
 
   return {
-    ruinRate, ruinValue, initialPortfolio, retireYears, mcSims,
+    ruinRate, ruinValue, initialPortfolio, retireYears, mcSims, periodsPerYear,
     scenarioP95: buildScenario(idxP95),
     scenarioP50: buildScenario(idxP50),
     scenarioP01: buildScenario(idxP01)
@@ -1431,6 +1454,7 @@ function runPipeline(){
         inflationRate: (parseFloat(document.getElementById('p_gk_inflation').value)||2.5)/100,
         retireYears: parseInt(document.getElementById('p_gk_years').value)||10,
         mcSims: parseInt(document.getElementById('p_gk_sims').value)||3000,
+        periodsPerYear: parseInt(document.getElementById('p_gk_freq').value,10)||1,
         upperGuardRatio: 1.20, lowerGuardRatio: 0.80, adjustStep: 0.10, ruinThresholdRatio: 0.50
       };
       gkResult=runGKWithdrawal(bt.dyn, gkParams, tradingDays, 42);
@@ -2057,7 +2081,7 @@ function renderGkTab(ctx){
   target.innerHTML=`
     <div class="panel-card">
       <h3>GK 護欄退休提領模擬結果</h3>
-      <p class="sub">初始資產 ${fmtWan(g.initialPortfolio)} 萬元 ・ 模擬 ${g.retireYears} 年期 ・ ${g.mcSims.toLocaleString()} 次蒙地卡羅路徑 ・ 破產門檻：資產低於初始資產的 ${((g.ruinValue/g.initialPortfolio)*100).toFixed(0)}%（即 ${fmtWan(g.ruinValue)} 萬元）。護欄法則：實際提領率超過初始提領率 1.2 倍時減提 10%（資本保全）；低於 0.8 倍時加提 10%（繁榮法則）。</p>
+      <p class="sub">初始資產 ${fmtWan(g.initialPortfolio)} 萬元 ・ 模擬 ${g.retireYears} 年期 ・ 提領頻率：${({1:'每年一次',4:'每季一次',12:'每月一次'})[g.periodsPerYear]||(g.periodsPerYear+' 次/年')} ・ ${g.mcSims.toLocaleString()} 次蒙地卡羅路徑 ・ 破產門檻：資產低於初始資產的 ${((g.ruinValue/g.initialPortfolio)*100).toFixed(0)}%（即 ${fmtWan(g.ruinValue)} 萬元）。護欄法則：實際提領率（換算年化）超過初始提領率 1.2 倍時該次減提 10%（資本保全）；低於 0.8 倍時該次加提 10%（繁榮法則）；通膨調整／跳過通膨仍按年判斷。下方表格「年提領金額」為該年度所有期數提領的加總。</p>
       <div class="kpi-strip" style="margin-bottom:0;">
         ${kpiCard('觸發破產警戒率', g.ruinRate.toFixed(2)+'%', g.ruinRate<10?'pos':'neg')}
         ${kpiCard('悲觀情境 PR0.1 期末資產', fmtWan(g.scenarioP01.finalAsset)+' 萬', 'neg')}
