@@ -309,7 +309,32 @@
         <span>PBO / DSR 過擬合檢驗</span>
         <div class="switch on" id="togPbo"></div>
       </div>
-      <div class="toggle-row">
+      <div class="field-hint">PBO/DSR 採 7×4 參數網格（回顧視窗 × λ）與 CSCV(S=10) 組合切割，計算量較大。</div>
+
+      <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+        <span>前向分析 WFA（Walk-Forward）</span>
+        <div class="switch on" id="togWfa"></div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>樣本內 IS 視窗（天）</label>
+          <input type="number" id="p_wfa_is" value="500" step="50">
+        </div>
+        <div>
+          <label>樣本外 OOS 視窗（天）</label>
+          <input type="number" id="p_wfa_oos" value="125" step="25">
+        </div>
+      </div>
+      <label>參數選優指標</label>
+      <select id="p_wfa_metric">
+        <option value="sharpe">Sharpe</option>
+        <option value="sortino">Sortino</option>
+        <option value="calmar">Calmar</option>
+        <option value="upi">UPI</option>
+      </select>
+      <div class="field-hint">每段先在 IS 視窗用與 PBO 相同的 7×4 網格（回顧視窗 × λ）選出指標最佳的參數，套用到緊接著的 OOS 視窗跑出真正樣本外報酬，所有 OOS 段首尾相接成一條完整曲線；OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。</div>
+
+      <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <span>蒙地卡羅未來壓力測試</span>
         <div class="switch on" id="togMc"></div>
       </div>
@@ -323,7 +348,6 @@
           <input type="number" id="p_mchorizon" value="250" step="10">
         </div>
       </div>
-      <div class="field-hint">PBO/DSR 採 7×4 參數網格（回顧視窗 × λ）與 CSCV(S=10) 組合切割，計算量較大。</div>
 
       <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <span>GK 護欄動態提領壓力測試</span>
@@ -390,6 +414,7 @@
         <button class="tab-btn active" data-tab="overview">配置績效總覽</button>
         <button class="tab-btn" data-tab="strategies">個別策略 / 相關性</button>
         <button class="tab-btn" data-tab="pbo">過擬合檢驗 PBO / DSR</button>
+        <button class="tab-btn" data-tab="wfa">前向分析 WFA</button>
         <button class="tab-btn" data-tab="mc">蒙地卡羅壓力測試</button>
         <button class="tab-btn" data-tab="gk">GK 動態提領分析</button>
       </div>
@@ -461,6 +486,10 @@
 
       <div class="tab-panel" id="tab-pbo">
         <div id="pboContent"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-wfa">
+        <div id="wfaContent"></div>
       </div>
 
       <div class="tab-panel" id="tab-mc">
@@ -801,9 +830,12 @@ function sharpeOfSlice(arr, tradingDays){
 /* =====================================================================
    PBO (CSCV) + DSR
    ===================================================================== */
+const WFA_LOOKBACK_GRID=[20,60,120,180,250,360,480];
+const WFA_LAMBDA_GRID=[0.5,1,2,3];
+
 function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProgress){
-  const lookbackGrid=[20,60,120,180,250,360,480];
-  const lambdaGrid=[0.5,1,2,3];
+  const lookbackGrid=WFA_LOOKBACK_GRID;
+  const lambdaGrid=WFA_LAMBDA_GRID;
   const grid=[];
   lambdaGrid.forEach(l=>lookbackGrid.forEach(w=>grid.push([w,l])));
   const numTrials=grid.length;
@@ -862,6 +894,79 @@ function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProg
     pboVal, logits, numCombos:combos.length, numTrials, grid, bestIdx,
     bestSrAnn, eMaxSrAnn: eMaxSr*Math.sqrt(tradingDays),
     varSrAnn: varSr*tradingDays, dsrZ, dsrP
+  };
+}
+
+/* =====================================================================
+   WALK-FORWARD ANALYSIS (WFA)
+   滾動切出一段段樣本內(IS)/樣本外(OOS)：每段先在 IS 用網格搜尋（與 PBO
+   相同的回顧視窗 × λ 網格）選出該段「最佳」參數，套用到緊接著的 OOS 段
+   跑出真正樣本外的報酬，所有 OOS 段首尾相接成一條完整的樣本外淨值曲線，
+   藉此檢驗策略在不斷重新校準參數的情況下，是否仍能維持樣本外績效
+   （而不是只在單一固定參數、單一樣本內最適下看起來好看）。
+   ===================================================================== */
+function runWalkForward(returns, isLen, oosLen, rebalPeriod, maxLev, lb, ub, selectMetric, tradingDays, riskFree, onProgress){
+  const lookbackGrid=WFA_LOOKBACK_GRID, lambdaGrid=WFA_LAMBDA_GRID;
+  const grid=[];
+  lambdaGrid.forEach(l=>lookbackGrid.forEach(w=>grid.push([w,l])));
+  const maxLookback=Math.max(...lookbackGrid);
+  const T=returns.length;
+
+  const segmentsMeta=[];
+  let isStart=maxLookback;
+  while(isStart+isLen+oosLen<=T){
+    segmentsMeta.push({isStart, isEnd:isStart+isLen, oosEnd:isStart+isLen+oosLen});
+    isStart+=oosLen;
+  }
+  if(segmentsMeta.length<1){
+    throw new Error('資料長度不足以執行 WFA（需要至少一個完整的 IS+OOS 區段：樣本內視窗 + 樣本外視窗 + 最大回顧視窗 480 天，請縮小視窗長度）');
+  }
+
+  const segments=[];
+  const allOosReturns=[];
+
+  segmentsMeta.forEach((seg,k)=>{
+    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：樣本內參數搜尋...`);
+    const dataStart=seg.isStart-maxLookback;
+    const sliceIS=returns.slice(dataStart, seg.isEnd); // 長度 = maxLookback+isLen
+
+    let bestScore=-Infinity, bestW=grid[0][0], bestL=grid[0][1], bestIsMetrics=null;
+    grid.forEach(([w,l])=>{
+      const p=runFastBacktest(sliceIS, w, l, rebalPeriod, maxLev, lb, ub, maxLookback);
+      if(p.length<10) return;
+      const m=computeMetrics(p, tradingDays, riskFree);
+      const score=m[selectMetric];
+      if(isFinite(score) && score>bestScore){ bestScore=score; bestW=w; bestL=l; bestIsMetrics=m; }
+    });
+    if(!bestIsMetrics){
+      const p=runFastBacktest(sliceIS, bestW, bestL, rebalPeriod, maxLev, lb, ub, maxLookback);
+      bestIsMetrics=computeMetrics(p, tradingDays, riskFree);
+      bestScore=bestIsMetrics[selectMetric];
+    }
+
+    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：套用最佳參數（回顧視窗 ${bestW}／λ ${bestL}）跑樣本外...`);
+    const sliceProd=returns.slice(dataStart, seg.oosEnd); // 長度 = maxLookback+isLen+oosLen
+    const prodOut=runFastBacktest(sliceProd, bestW, bestL, rebalPeriod, maxLev, lb, ub, maxLookback);
+    const oosReturns=prodOut.slice(isLen);
+    const oosMetrics= oosReturns.length>1 ? computeMetrics(oosReturns, tradingDays, riskFree) : null;
+
+    segments.push({
+      segIdx:k, isStartIdx:seg.isStart, isEndIdx:seg.isEnd, oosEndIdx:seg.oosEnd,
+      lookback:bestW, lambda:bestL, isScore:bestScore, isMetrics:bestIsMetrics, oosMetrics
+    });
+    if(oosMetrics) allOosReturns.push(...oosReturns);
+  });
+
+  const stitchedMetrics= allOosReturns.length>1 ? computeMetrics(allOosReturns, tradingDays, riskFree) : null;
+  const validSegs=segments.filter(s=>s.oosMetrics);
+  const avgIsScore= mean(validSegs.map(s=>s.isScore));
+  const avgOosScore= mean(validSegs.map(s=>s.oosMetrics[selectMetric]));
+  const winRate= validSegs.length>0 ? validSegs.filter(s=>s.oosMetrics[selectMetric]>0).length/validSegs.length*100 : 0;
+  const efficiency= avgIsScore!==0 ? avgOosScore/avgIsScore : null;
+
+  return {
+    segments, stitchedReturns:allOosReturns, stitchedMetrics,
+    avgIsScore, avgOosScore, efficiency, winRate, selectMetric, isLen, oosLen
   };
 }
 
@@ -1316,7 +1421,7 @@ function wireToggle(id){
   const el=document.getElementById(id);
   el.addEventListener('click', ()=> el.classList.toggle('on'));
 }
-wireToggle('togPbo'); wireToggle('togMc'); wireToggle('togGk');
+wireToggle('togPbo'); wireToggle('togWfa'); wireToggle('togMc'); wireToggle('togGk');
 
 /* tabs */
 document.querySelectorAll('.tab-btn').forEach(btn=>{
@@ -1437,6 +1542,14 @@ function runPipeline(){
       pboResult=computePBODSR(returns, lb, ub, rebal, maxLev, tradingDays, (m)=>setLoading(true,m));
     }
 
+    let wfaResult=null;
+    if(document.getElementById('togWfa').classList.contains('on')){
+      const isLen=parseInt(document.getElementById('p_wfa_is').value,10)||500;
+      const oosLen=parseInt(document.getElementById('p_wfa_oos').value,10)||125;
+      const selectMetric=document.getElementById('p_wfa_metric').value;
+      wfaResult=runWalkForward(returns, isLen, oosLen, rebal, maxLev, lb, ub, selectMetric, tradingDays, riskFree, (m)=>setLoading(true,m));
+    }
+
     let mcResult=null;
     if(document.getElementById('togMc').classList.contains('on')){
       setLoading(true, '執行蒙地卡羅未來壓力測試...');
@@ -1462,7 +1575,7 @@ function runPipeline(){
 
     renderResults({
       P, B, bt, dynMetrics, staMetrics, ewMetrics, bmList,
-      evalDates, corr, stratStats, pboResult, mcResult, gkResult,
+      evalDates, corr, stratStats, pboResult, wfaResult, mcResult, gkResult,
       tradingDays, riskFree, lookback, rebal, maxLev, lambda, lb, ub
     });
 
@@ -1505,6 +1618,7 @@ function renderResults(ctx){
   renderOverviewTab(ctx);
   renderStrategiesTab(ctx);
   renderPboTab(ctx);
+  renderWfaTab(ctx);
   renderMcTab(ctx);
   renderGkTab(ctx);
 }
@@ -1941,6 +2055,99 @@ function renderPboTab(ctx){
         ] } }
     }
   });
+}
+
+function renderWfaTab(ctx){
+  const target=document.getElementById('wfaContent');
+  const {wfaResult, P}=ctx;
+  if(!wfaResult){
+    target.innerHTML=`<div class="panel-card"><p class="sub">此次分析未啟用前向分析 WFA（可於左側「進階檢驗模組」開啟後重新執行）。</p></div>`;
+    return;
+  }
+  const metricLabels={sharpe:'Sharpe', sortino:'Sortino', calmar:'Calmar', upi:'UPI'};
+  const metricLabel=metricLabels[wfaResult.selectMetric]||wfaResult.selectMetric;
+  const sm=wfaResult.stitchedMetrics;
+  const effCls= wfaResult.efficiency===null ? 'neu' : (wfaResult.efficiency>=0.7?'pos':(wfaResult.efficiency>=0.3?'neu':'neg'));
+
+  let html=`
+  <div class="panel-card">
+    <h3>前向分析 WFA — 樣本外穩健度</h3>
+    <p class="sub">共 ${wfaResult.segments.length} 個滾動區段，每段先在樣本內視窗（${wfaResult.isLen} 天）用 7×4 參數網格（回顧視窗 × λ）依「${metricLabel}」選出最佳參數，套用到緊接著的樣本外視窗（${wfaResult.oosLen} 天）跑出真正未見過的報酬，所有樣本外區段首尾相接成一條完整曲線。OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。</p>
+    <div class="kpi-strip" style="margin-top:14px;">
+      ${kpiCard('OOS / IS 效率比', wfaResult.efficiency===null?'N/A':fmtNum(wfaResult.efficiency), effCls)}
+      ${kpiCard('OOS 勝率 ('+metricLabel+'>0)', fmtPct(wfaResult.winRate/100,1), wfaResult.winRate>=50?'pos':'neg')}
+      ${kpiCard('平均樣本內 '+metricLabel, fmtNum(wfaResult.avgIsScore), 'neu')}
+      ${kpiCard('平均樣本外 '+metricLabel, fmtNum(wfaResult.avgOosScore), wfaResult.avgOosScore>=0?'pos':'neg')}
+    </div>
+  </div>`;
+
+  if(sm){
+    html += `
+    <div class="panel-card" style="margin-top:14px;">
+      <h3>拼接樣本外權益曲線（Stitched OOS Equity Curve）</h3>
+      <p class="sub">所有樣本外區段依時間順序首尾相接，代表「若每段都只用前段樣本內資料選出的參數上陣」所得到的真實樣本外績效。</p>
+      <div class="chart-box"><canvas id="wfaChart"></canvas></div>
+      <div class="kpi-strip" style="margin-top:14px;">
+        ${kpiCard('拼接 OOS CAGR', fmtPct(sm.cagr), sm.cagr>=0?'pos':'neg')}
+        ${kpiCard('拼接 OOS Sharpe', fmtNum(sm.sharpe), 'neu')}
+        ${kpiCard('拼接 OOS MDD', fmtPct(sm.mdd), 'neg')}
+        ${kpiCard('拼接 OOS Sortino', fmtNum(sm.sortino), 'neu')}
+        ${kpiCard('拼接 OOS Calmar', fmtNum(sm.calmar), 'neu')}
+        ${kpiCard('拼接 OOS UPI', fmtNum(sm.upi), 'neu')}
+      </div>
+    </div>`;
+  }
+
+  const rows=wfaResult.segments.map(seg=>{
+    const isStartD = P.dates[seg.isStartIdx] ? fmtDate(P.dates[seg.isStartIdx]) : '—';
+    const isEndD = P.dates[seg.isEndIdx-1] ? fmtDate(P.dates[seg.isEndIdx-1]) : '—';
+    const oosEndD = P.dates[Math.min(seg.oosEndIdx,P.dates.length)-1] ? fmtDate(P.dates[Math.min(seg.oosEndIdx,P.dates.length)-1]) : '—';
+    const oosScore = seg.oosMetrics ? fmtNum(seg.oosMetrics[wfaResult.selectMetric]) : '—';
+    const oosCagr = seg.oosMetrics ? fmtPct(seg.oosMetrics.cagr) : '—';
+    const oosMdd = seg.oosMetrics ? fmtPct(seg.oosMetrics.mdd) : '—';
+    return `<tr>
+      <td>${seg.segIdx+1}</td>
+      <td>${isStartD} ~ ${isEndD}</td>
+      <td>${isEndD} ~ ${oosEndD}</td>
+      <td>${seg.lookback}</td>
+      <td>${seg.lambda}</td>
+      <td>${fmtNum(seg.isScore)}</td>
+      <td>${oosScore}</td>
+      <td>${oosCagr}</td>
+      <td>${oosMdd}</td>
+    </tr>`;
+  }).join('');
+
+  html += `
+  <div class="panel-card" style="margin-top:14px;">
+    <h3>逐區段明細</h3>
+    <div style="overflow-x:auto;">
+    <table class="data-table">
+      <thead><tr>
+        <th>區段</th><th>樣本內期間</th><th>樣本外期間</th><th>回顧視窗</th><th>λ</th>
+        <th>IS ${metricLabel}</th><th>OOS ${metricLabel}</th><th>OOS CAGR</th><th>OOS MDD</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+
+  target.innerHTML=html;
+
+  if(sm && document.getElementById('wfaChart')){
+    const eq=sm.equity;
+    const labels=eq.map((_,i)=>i);
+    charts.wfa=new Chart(document.getElementById('wfaChart'), {
+      type:'line',
+      data:{ labels, datasets:[{ label:'拼接 OOS 權益曲線', data:eq, borderColor:'#5B9BD9', backgroundColor:'rgba(91,155,217,.12)', borderWidth:1.6, pointRadius:0, fill:true, tension:0 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        scales:{ x:{ticks:{color:'#5B6472', maxTicksLimit:10}, grid:{color:'#1D222B'}, title:{display:true,text:'樣本外交易日（拼接後）',color:'#8B93A3'}},
+                 y:{ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}} },
+        plugins:{ legend:{display:false} }
+      }
+    });
+  }
 }
 
 function renderMcTab(ctx){
