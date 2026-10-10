@@ -305,11 +305,18 @@
 
     <div class="side-section" id="advSection" style="display:none;">
       <h2><span class="num">05</span> 進階檢驗模組</h2>
-      <div class="toggle-row">
+
+      <h3 style="margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--text-dim);">參數網格設定（PBO/DSR 與 WFA 共用）</h3>
+      <div class="field-hint" style="margin-top:0;">下方自選的參數維度會同時供「PBO/DSR」的 CSCV 網格與「前向分析 WFA」各滾動區段的樣本內搜尋使用，可新增任意數量的參數維度（不限於回顧視窗、λ 兩個），組合數＝各維度網格點數相乘。若不新增任何維度，兩個模組將只用側欄目前設定的單一組固定參數執行（不做網格搜尋）。</div>
+      <div id="paramGridRows"></div>
+      <button type="button" class="pool-btn add" id="paramGridAddBtn" style="width:auto;height:auto;padding:4px 10px;font-size:11.5px;margin-top:4px;">＋ 新增參數</button>
+      <div class="field-hint" id="paramGridInfo" style="margin-top:8px;"></div>
+
+      <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <span>PBO / DSR 過擬合檢驗</span>
         <div class="switch on" id="togPbo"></div>
       </div>
-      <div class="field-hint">PBO/DSR 採 7×4 參數網格（回顧視窗 × λ）與 CSCV(S=10) 組合切割，計算量較大。</div>
+      <div class="field-hint">PBO/DSR 採上方設定的參數網格與 CSCV(S=10) 組合切割，網格組合數越多計算量越大。</div>
 
       <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <span>前向分析 WFA（Walk-Forward）</span>
@@ -332,7 +339,7 @@
         <option value="calmar">Calmar</option>
         <option value="upi">UPI</option>
       </select>
-      <div class="field-hint">每段先在 IS 視窗用與 PBO 相同的 7×4 網格（回顧視窗 × λ）選出指標最佳的參數，套用到緊接著的 OOS 視窗跑出真正樣本外報酬，所有 OOS 段首尾相接成一條完整曲線；OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。</div>
+      <div class="field-hint">每段先在 IS 視窗用上方設定的參數網格選出指標最佳的參數組合，套用到緊接著的 OOS 視窗跑出真正樣本外報酬，所有 OOS 段首尾相接成一條完整曲線；OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。網格組合數越多，每個滾動區段都要重跑一次，運算時間會明顯拉長。</div>
 
       <div class="toggle-row" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <span>蒙地卡羅未來壓力測試</span>
@@ -830,23 +837,19 @@ function sharpeOfSlice(arr, tradingDays){
 /* =====================================================================
    PBO (CSCV) + DSR
    ===================================================================== */
-const WFA_LOOKBACK_GRID=[20,60,120,180,250,360,480];
-const WFA_LAMBDA_GRID=[0.5,1,2,3];
-
-function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProgress){
-  const lookbackGrid=WFA_LOOKBACK_GRID;
-  const lambdaGrid=WFA_LAMBDA_GRID;
-  const grid=[];
-  lambdaGrid.forEach(l=>lookbackGrid.forEach(w=>grid.push([w,l])));
-  const numTrials=grid.length;
-  const maxLookback=Math.max(...lookbackGrid);
+function computePBODSR(returns, baseParams, paramCombos, defs, tradingDays, onProgress){
+  const {lookback, rebal, lambda, maxLev, lb, ub}=baseParams;
+  const numTrials=paramCombos.length;
+  if(numTrials<2) throw new Error('PBO/DSR 需要至少 2 組參數組合才能進行過擬合檢驗，請在「參數網格設定」新增至少一個參數維度（網格點數 ≥ 2）。');
+  const maxLookback=Math.max(lookback, ...paramCombos.map(c=> c.lookback!=null? Math.max(5,Math.round(c.lookback)) : lookback));
   const T=returns.length;
   const Tpbo=T-maxLookback;
-  if(Tpbo<50) throw new Error('資料長度不足以執行 PBO/DSR 網格檢驗（需大於 480 個交易日以上）');
+  if(Tpbo<50) throw new Error('資料長度不足以執行 PBO/DSR 網格檢驗（需大於回顧視窗上限再加 50 個交易日以上）');
 
-  const trials=grid.map((g,i)=>{
+  const trials=paramCombos.map((ov,i)=>{
     if(onProgress) onProgress(`PBO 網格回測 ${i+1}/${numTrials}`);
-    return runFastBacktest(returns, g[0], g[1], rebalPeriod, maxLev, lb, ub, maxLookback);
+    const eff=applyGridOverrides(lookback, rebal, lambda, maxLev, lb, ub, ov);
+    return runFastBacktest(returns, eff.effLookback, eff.effLambda, eff.effRebal, eff.effMaxLev, eff.effLb, eff.effUb, maxLookback);
   });
 
   const S=10;
@@ -891,7 +894,8 @@ function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProg
   const dsrP = 1-normcdf(dsrZ);
 
   return {
-    pboVal, logits, numCombos:combos.length, numTrials, grid, bestIdx,
+    pboVal, logits, numCombos:combos.length, numTrials, paramCombos, bestIdx,
+    bestComboLabel: comboLabel(paramCombos[bestIdx], defs),
     bestSrAnn, eMaxSrAnn: eMaxSr*Math.sqrt(tradingDays),
     varSrAnn: varSr*tradingDays, dsrZ, dsrP
   };
@@ -899,17 +903,16 @@ function computePBODSR(returns, lb, ub, rebalPeriod, maxLev, tradingDays, onProg
 
 /* =====================================================================
    WALK-FORWARD ANALYSIS (WFA)
-   滾動切出一段段樣本內(IS)/樣本外(OOS)：每段先在 IS 用網格搜尋（與 PBO
-   相同的回顧視窗 × λ 網格）選出該段「最佳」參數，套用到緊接著的 OOS 段
-   跑出真正樣本外的報酬，所有 OOS 段首尾相接成一條完整的樣本外淨值曲線，
-   藉此檢驗策略在不斷重新校準參數的情況下，是否仍能維持樣本外績效
-   （而不是只在單一固定參數、單一樣本內最適下看起來好看）。
+   滾動切出一段段樣本內(IS)/樣本外(OOS)：每段先在 IS 用使用者自選的參數網格
+   （與 PBO/DSR 共用，維度與範圍皆可自訂，不限回顧視窗／λ 兩個）選出該段
+   「最佳」參數組合，套用到緊接著的 OOS 段跑出真正樣本外的報酬，所有 OOS
+   段首尾相接成一條完整的樣本外淨值曲線，藉此檢驗策略在不斷重新校準參數的
+   情況下，是否仍能維持樣本外績效（而不是只在單一固定參數、單一樣本內最適
+   下看起來好看）。
    ===================================================================== */
-function runWalkForward(returns, isLen, oosLen, rebalPeriod, maxLev, lb, ub, selectMetric, tradingDays, riskFree, onProgress){
-  const lookbackGrid=WFA_LOOKBACK_GRID, lambdaGrid=WFA_LAMBDA_GRID;
-  const grid=[];
-  lambdaGrid.forEach(l=>lookbackGrid.forEach(w=>grid.push([w,l])));
-  const maxLookback=Math.max(...lookbackGrid);
+function runWalkForward(returns, isLen, oosLen, baseParams, paramCombos, defs, selectMetric, tradingDays, riskFree, onProgress){
+  const {lookback, rebal, lambda, maxLev, lb, ub}=baseParams;
+  const maxLookback=Math.max(lookback, ...paramCombos.map(c=> c.lookback!=null? Math.max(5,Math.round(c.lookback)) : lookback));
   const T=returns.length;
 
   const segmentsMeta=[];
@@ -919,40 +922,43 @@ function runWalkForward(returns, isLen, oosLen, rebalPeriod, maxLev, lb, ub, sel
     isStart+=oosLen;
   }
   if(segmentsMeta.length<1){
-    throw new Error('資料長度不足以執行 WFA（需要至少一個完整的 IS+OOS 區段：樣本內視窗 + 樣本外視窗 + 最大回顧視窗 480 天，請縮小視窗長度）');
+    throw new Error(`資料長度不足以執行 WFA（需要至少一個完整的 IS+OOS 區段：樣本內視窗 + 樣本外視窗 + 最大回顧視窗 ${maxLookback} 天，請縮小視窗長度或調整參數網格範圍）`);
   }
 
   const segments=[];
   const allOosReturns=[];
 
   segmentsMeta.forEach((seg,k)=>{
-    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：樣本內參數搜尋...`);
+    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：樣本內參數搜尋（${paramCombos.length} 組組合）...`);
     const dataStart=seg.isStart-maxLookback;
     const sliceIS=returns.slice(dataStart, seg.isEnd); // 長度 = maxLookback+isLen
 
-    let bestScore=-Infinity, bestW=grid[0][0], bestL=grid[0][1], bestIsMetrics=null;
-    grid.forEach(([w,l])=>{
-      const p=runFastBacktest(sliceIS, w, l, rebalPeriod, maxLev, lb, ub, maxLookback);
+    let bestScore=-Infinity, bestCombo=paramCombos[0], bestIsMetrics=null;
+    paramCombos.forEach(ov=>{
+      const eff=applyGridOverrides(lookback, rebal, lambda, maxLev, lb, ub, ov);
+      const p=runFastBacktest(sliceIS, eff.effLookback, eff.effLambda, eff.effRebal, eff.effMaxLev, eff.effLb, eff.effUb, maxLookback);
       if(p.length<10) return;
       const m=computeMetrics(p, tradingDays, riskFree);
       const score=m[selectMetric];
-      if(isFinite(score) && score>bestScore){ bestScore=score; bestW=w; bestL=l; bestIsMetrics=m; }
+      if(isFinite(score) && score>bestScore){ bestScore=score; bestCombo=ov; bestIsMetrics=m; }
     });
+    let bestEff=applyGridOverrides(lookback, rebal, lambda, maxLev, lb, ub, bestCombo);
     if(!bestIsMetrics){
-      const p=runFastBacktest(sliceIS, bestW, bestL, rebalPeriod, maxLev, lb, ub, maxLookback);
+      const p=runFastBacktest(sliceIS, bestEff.effLookback, bestEff.effLambda, bestEff.effRebal, bestEff.effMaxLev, bestEff.effLb, bestEff.effUb, maxLookback);
       bestIsMetrics=computeMetrics(p, tradingDays, riskFree);
       bestScore=bestIsMetrics[selectMetric];
     }
 
-    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：套用最佳參數（回顧視窗 ${bestW}／λ ${bestL}）跑樣本外...`);
+    const label=comboLabel(bestCombo, defs);
+    if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：套用最佳參數（${label}）跑樣本外...`);
     const sliceProd=returns.slice(dataStart, seg.oosEnd); // 長度 = maxLookback+isLen+oosLen
-    const prodOut=runFastBacktest(sliceProd, bestW, bestL, rebalPeriod, maxLev, lb, ub, maxLookback);
+    const prodOut=runFastBacktest(sliceProd, bestEff.effLookback, bestEff.effLambda, bestEff.effRebal, bestEff.effMaxLev, bestEff.effLb, bestEff.effUb, maxLookback);
     const oosReturns=prodOut.slice(isLen);
     const oosMetrics= oosReturns.length>1 ? computeMetrics(oosReturns, tradingDays, riskFree) : null;
 
     segments.push({
       segIdx:k, isStartIdx:seg.isStart, isEndIdx:seg.isEnd, oosEndIdx:seg.oosEnd,
-      lookback:bestW, lambda:bestL, isScore:bestScore, isMetrics:bestIsMetrics, oosMetrics
+      bestCombo, comboLabel:label, isScore:bestScore, isMetrics:bestIsMetrics, oosMetrics
     });
     if(oosMetrics) allOosReturns.push(...oosReturns);
   });
@@ -1368,6 +1374,7 @@ function refreshSelectionState(){
     bmWarn.style.display='none';
   }
   runBtn.disabled=!ok;
+  refreshParamGridAxisOptions();
 }
 
 document.getElementById('pickAllBtn').addEventListener('click', ()=>{
@@ -1415,6 +1422,100 @@ function buildBoundsUI(names){
     wrap.appendChild(row);
   });
 }
+
+/* ---- 共用參數網格設定（PBO/DSR + WFA）---- */
+let paramGridState=[
+  {paramId:'lookback', min:60, max:500, steps:7},
+  {paramId:'lambda', min:0.3, max:3, steps:4}
+];
+
+function getAxisDefsForSidebar(){
+  const {names}=getSelectedStrategies();
+  const maxLev=parseFloat(document.getElementById('p_maxlev').value)||1;
+  const ub=names.map((_,i)=>{
+    const el=document.getElementById('ub_'+i);
+    return el? (parseFloat(el.value)||maxLev) : maxLev;
+  });
+  return getAxisDefs({P:{names}, lb:[], ub, maxLev});
+}
+
+function updateParamGridInfo(){
+  const el=document.getElementById('paramGridInfo'); if(!el) return;
+  if(paramGridState.length===0){
+    el.textContent='目前沒有任何參數維度：PBO/DSR 與 WFA 將只用側欄目前設定的單一組固定參數執行（不做網格搜尋）。';
+    el.style.color='var(--amber)';
+    return;
+  }
+  const total=paramGridState.reduce((acc,row)=> acc*Math.max(1,Math.round(isFinite(row.steps)?row.steps:1)), 1);
+  let msg=`共 ${paramGridState.length} 個參數維度，組合數＝${total}`;
+  if(total>500){
+    msg+='　⚠ 組合數偏大，PBO/DSR、尤其是 WFA（每個滾動區段都要重跑一次整組網格）運算時間可能明顯拉長，建議酌減網格點數或維度。';
+    el.style.color='var(--amber)';
+  } else {
+    el.style.color='';
+  }
+  el.textContent=msg;
+}
+
+function renderParamGridRowsUI(){
+  const wrap=document.getElementById('paramGridRows');
+  if(!wrap) return;
+  const defs=getAxisDefsForSidebar();
+  wrap.innerHTML=paramGridState.map((row,idx)=>{
+    const opts=defs.map(d=>`<option value="${d.id}" ${d.id===row.paramId?'selected':''}>${d.label}</option>`).join('');
+    return `
+      <div class="param-grid-row" data-idx="${idx}" style="display:grid;grid-template-columns:1fr 62px 62px 50px 22px;gap:5px;align-items:center;margin-bottom:6px;">
+        <select class="pg-param" data-idx="${idx}">${opts}</select>
+        <input type="number" class="pg-min" data-idx="${idx}" value="${row.min}" step="0.01" title="最小值">
+        <input type="number" class="pg-max" data-idx="${idx}" value="${row.max}" step="0.01" title="最大值">
+        <input type="number" class="pg-steps" data-idx="${idx}" value="${row.steps}" min="1" max="30" title="網格點數">
+        <button type="button" class="pool-btn remove" data-idx="${idx}" title="移除此參數">✕</button>
+      </div>`;
+  }).join('') || `<div class="pool-empty">（尚未新增任何參數維度）</div>`;
+
+  wrap.querySelectorAll('.pg-param').forEach(el=>el.addEventListener('change', e=>{
+    const idx=parseInt(e.target.dataset.idx,10);
+    const d=defs.find(x=>x.id===e.target.value);
+    paramGridState[idx].paramId=e.target.value;
+    if(d){ paramGridState[idx].min=d.round? Math.round(d.min):d.min; paramGridState[idx].max=d.round? Math.round(d.max):d.max; }
+    renderParamGridRowsUI();
+  }));
+  wrap.querySelectorAll('.pg-min').forEach(el=>el.addEventListener('input', e=>{
+    paramGridState[parseInt(e.target.dataset.idx,10)].min=parseFloat(e.target.value); updateParamGridInfo();
+  }));
+  wrap.querySelectorAll('.pg-max').forEach(el=>el.addEventListener('input', e=>{
+    paramGridState[parseInt(e.target.dataset.idx,10)].max=parseFloat(e.target.value); updateParamGridInfo();
+  }));
+  wrap.querySelectorAll('.pg-steps').forEach(el=>el.addEventListener('input', e=>{
+    paramGridState[parseInt(e.target.dataset.idx,10)].steps=Math.max(1, parseInt(e.target.value,10)||1); updateParamGridInfo();
+  }));
+  wrap.querySelectorAll('.param-grid-row .pool-btn.remove').forEach(el=>el.addEventListener('click', e=>{
+    paramGridState.splice(parseInt(e.target.dataset.idx,10),1);
+    renderParamGridRowsUI();
+    updateParamGridInfo();
+  }));
+  updateParamGridInfo();
+}
+
+function refreshParamGridAxisOptions(){
+  const defs=getAxisDefsForSidebar();
+  const validIds=new Set(defs.map(d=>d.id));
+  paramGridState.forEach(row=>{
+    if(!validIds.has(row.paramId)){
+      const d=defs[0];
+      row.paramId=d.id; row.min=d.round? Math.round(d.min):d.min; row.max=d.round? Math.round(d.max):d.max;
+    }
+  });
+  renderParamGridRowsUI();
+}
+
+document.getElementById('paramGridAddBtn').addEventListener('click', ()=>{
+  const defs=getAxisDefsForSidebar();
+  const used=new Set(paramGridState.map(r=>r.paramId));
+  const d=defs.find(x=>!used.has(x.id)) || defs[0];
+  paramGridState.push({paramId:d.id, min:d.round? Math.round(d.min):d.min, max:d.round? Math.round(d.max):d.max, steps:4});
+  renderParamGridRowsUI();
+});
 
 /* toggles */
 function wireToggle(id){
@@ -1537,9 +1638,13 @@ function runPipeline(){
       return {name, ...computeMetrics(col, tradingDays, riskFree)};
     });
 
+    const gridDefs=getAxisDefs({P, lb, ub, maxLev});
+    const gridCombos=buildParamCombos(paramGridState, gridDefs);
+    const baseParams={lookback, rebal, lambda, maxLev, lb, ub};
+
     let pboResult=null;
     if(document.getElementById('togPbo').classList.contains('on')){
-      pboResult=computePBODSR(returns, lb, ub, rebal, maxLev, tradingDays, (m)=>setLoading(true,m));
+      pboResult=computePBODSR(returns, baseParams, gridCombos, gridDefs, tradingDays, (m)=>setLoading(true,m));
     }
 
     let wfaResult=null;
@@ -1547,7 +1652,7 @@ function runPipeline(){
       const isLen=parseInt(document.getElementById('p_wfa_is').value,10)||500;
       const oosLen=parseInt(document.getElementById('p_wfa_oos').value,10)||125;
       const selectMetric=document.getElementById('p_wfa_metric').value;
-      wfaResult=runWalkForward(returns, isLen, oosLen, rebal, maxLev, lb, ub, selectMetric, tradingDays, riskFree, (m)=>setLoading(true,m));
+      wfaResult=runWalkForward(returns, isLen, oosLen, baseParams, gridCombos, gridDefs, selectMetric, tradingDays, riskFree, (m)=>setLoading(true,m));
     }
 
     let mcResult=null;
@@ -1889,11 +1994,10 @@ function buildAxisValues(min, max, steps, round){
   return round? [...new Set(raw)] : raw;
 }
 
-function evalBacktestForParams(ctx, overrides){
-  const {P, lb, ub, rebal, maxLev, lambda, lookback, tradingDays, riskFree}=ctx;
-  let effLookback=lookback, effRebal=rebal, effLambda=lambda, effMaxLev=maxLev;
-  const effLb=lb.slice(), effUb=ub.slice();
-  Object.keys(overrides).forEach(axisId=>{
+function applyGridOverrides(baseLookback, baseRebal, baseLambda, baseMaxLev, baseLb, baseUb, overrides){
+  let effLookback=baseLookback, effRebal=baseRebal, effLambda=baseLambda, effMaxLev=baseMaxLev;
+  const effLb=baseLb.slice(), effUb=baseUb.slice();
+  Object.keys(overrides||{}).forEach(axisId=>{
     const v=overrides[axisId];
     if(axisId==='lookback') effLookback=Math.max(5,Math.round(v));
     else if(axisId==='rebal') effRebal=Math.max(1,Math.round(v));
@@ -1905,8 +2009,38 @@ function evalBacktestForParams(ctx, overrides){
       if(effLb[i]>v) effLb[i]=0; // 槓桿上限掃到低於原下限時，放寬下限避免必然無解
     }
   });
-  if(effLookback>=P.returns.length-5) return null;
-  const p=runFastBacktest(P.returns, effLookback, effLambda, effRebal, effMaxLev, effLb, effUb, effLookback);
+  return {effLookback, effRebal, effLambda, effMaxLev, effLb, effUb};
+}
+
+function comboLabel(overrides, defs){
+  const keys=Object.keys(overrides||{});
+  if(keys.length===0) return '固定參數（無網格）';
+  return keys.map(k=>{
+    const d=defs.find(x=>x.id===k);
+    const label=d? d.label.replace(/（.*?）/,'').replace(/\s+/g,' ').trim() : k;
+    return `${label}=${fmtNum(overrides[k])}`;
+  }).join('、');
+}
+
+function buildParamCombos(gridRows, defs){
+  if(!gridRows || gridRows.length===0) return [{}];
+  const byId=id=>defs.find(d=>d.id===id);
+  let combos=[{}];
+  gridRows.forEach(row=>{
+    const d=byId(row.paramId); if(!d) return;
+    const vals=buildAxisValues(row.min, row.max, Math.max(1,row.steps||1), d.round);
+    const next=[];
+    combos.forEach(c=> vals.forEach(v=> next.push(Object.assign({}, c, {[row.paramId]: v})) ));
+    combos=next;
+  });
+  return combos.length? combos : [{}];
+}
+
+function evalBacktestForParams(ctx, overrides){
+  const {P, lb, ub, rebal, maxLev, lambda, lookback, tradingDays, riskFree}=ctx;
+  const eff=applyGridOverrides(lookback, rebal, lambda, maxLev, lb, ub, overrides);
+  if(eff.effLookback>=P.returns.length-5) return null;
+  const p=runFastBacktest(P.returns, eff.effLookback, eff.effLambda, eff.effRebal, eff.effMaxLev, eff.effLb, eff.effUb, eff.effLookback);
   if(!p || p.length<10) return null;
   return computeMetrics(p, tradingDays, riskFree);
 }
@@ -2001,7 +2135,7 @@ function renderPboTab(ctx){
     <div class="grid-2">
       <div class="panel-card">
         <h3>PBO — 回測過擬合機率 (CSCV)</h3>
-        <p class="sub">${pboResult.numTrials} 組參數網格（回顧視窗 × λ）／${pboResult.numCombos} 組合切割樣本。Logit ≤ 0 代表樣本內最優在樣本外表現低於中位數，即為過擬合訊號。</p>
+        <p class="sub">左側「參數網格設定」共 ${pboResult.numTrials} 組參數組合／${pboResult.numCombos} 組合切割樣本。Logit ≤ 0 代表樣本內最優在樣本外表現低於中位數，即為過擬合訊號。</p>
         <div class="chart-box"><canvas id="pboChart"></canvas></div>
         <div class="kpi-strip" style="margin-top:14px;grid-template-columns:1fr;">
           ${kpiCard('PBO 過擬合機率', fmtPct(pboResult.pboVal,1), pboResult.pboVal<0.3?'pos':'neg')}
@@ -2009,7 +2143,7 @@ function renderPboTab(ctx){
       </div>
       <div class="panel-card">
         <h3>DSR — 縮減夏普比率檢定</h3>
-        <p class="sub">考慮多重測試、偏態與峰態後，最佳參數組合的夏普比率是否顯著優於零假設下的期望最大夏普比率。</p>
+        <p class="sub">考慮多重測試、偏態與峰態後，最佳參數組合（${pboResult.bestComboLabel}）的夏普比率是否顯著優於零假設下的期望最大夏普比率。</p>
         <div class="chart-box"><canvas id="dsrChart"></canvas></div>
         <div class="kpi-strip" style="margin-top:14px;">
           ${kpiCard('最佳年化 Sharpe', fmtNum(pboResult.bestSrAnn))}
@@ -2072,7 +2206,7 @@ function renderWfaTab(ctx){
   let html=`
   <div class="panel-card">
     <h3>前向分析 WFA — 樣本外穩健度</h3>
-    <p class="sub">共 ${wfaResult.segments.length} 個滾動區段，每段先在樣本內視窗（${wfaResult.isLen} 天）用 7×4 參數網格（回顧視窗 × λ）依「${metricLabel}」選出最佳參數，套用到緊接著的樣本外視窗（${wfaResult.oosLen} 天）跑出真正未見過的報酬，所有樣本外區段首尾相接成一條完整曲線。OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。</p>
+    <p class="sub">共 ${wfaResult.segments.length} 個滾動區段，每段先在樣本內視窗（${wfaResult.isLen} 天）用左側「參數網格設定」的參數組合依「${metricLabel}」選出最佳參數，套用到緊接著的樣本外視窗（${wfaResult.oosLen} 天）跑出真正未見過的報酬，所有樣本外區段首尾相接成一條完整曲線。OOS/IS 效率比越接近 1 代表樣本外表現越能延續樣本內，越低則是過擬合警訊。</p>
     <div class="kpi-strip" style="margin-top:14px;">
       ${kpiCard('OOS / IS 效率比', wfaResult.efficiency===null?'N/A':fmtNum(wfaResult.efficiency), effCls)}
       ${kpiCard('OOS 勝率 ('+metricLabel+'>0)', fmtPct(wfaResult.winRate/100,1), wfaResult.winRate>=50?'pos':'neg')}
@@ -2109,8 +2243,7 @@ function renderWfaTab(ctx){
       <td>${seg.segIdx+1}</td>
       <td>${isStartD} ~ ${isEndD}</td>
       <td>${isEndD} ~ ${oosEndD}</td>
-      <td>${seg.lookback}</td>
-      <td>${seg.lambda}</td>
+      <td style="white-space:nowrap;">${seg.comboLabel}</td>
       <td>${fmtNum(seg.isScore)}</td>
       <td>${oosScore}</td>
       <td>${oosCagr}</td>
@@ -2124,7 +2257,7 @@ function renderWfaTab(ctx){
     <div style="overflow-x:auto;">
     <table class="data-table">
       <thead><tr>
-        <th>區段</th><th>樣本內期間</th><th>樣本外期間</th><th>回顧視窗</th><th>lambda</th>
+        <th>區段</th><th>樣本內期間</th><th>樣本外期間</th><th>該段最佳參數組合</th>
         <th>IS ${metricLabel}</th><th>OOS ${metricLabel}</th><th>OOS CAGR</th><th>OOS MDD</th>
       </tr></thead>
       <tbody>${rows}</tbody>
