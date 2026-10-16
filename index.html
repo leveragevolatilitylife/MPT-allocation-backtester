@@ -500,6 +500,14 @@
           <div class="chart-box tall" style="margin-top:14px;"><canvas id="rollLineChart"></canvas></div>
           <div class="chart-box" style="margin-top:14px;"><canvas id="rollHistChart"></canvas></div>
         </div>
+        <div class="panel-card">
+          <h3>逐年報酬比較</h3>
+          <p class="sub" id="yearlySub">各曆年報酬率：動態 MPT／靜態 MPT／等權重配置／各 Benchmark</p>
+          <div style="overflow-x:auto;">
+            <table id="yearlyTable"><thead><tr></tr></thead><tbody></tbody></table>
+          </div>
+          <div class="chart-box tall" style="margin-top:14px;"><canvas id="yearlyChart"></canvas></div>
+        </div>
       </div>
 
       <div class="tab-panel" id="tab-strategies">
@@ -1919,6 +1927,47 @@ function renderOverviewTab(ctx){
 
   renderRebalanceTable(bt, evalDates, P.names);
   renderRollingReturnsPanel(ctx);
+  renderYearlyReturns(ctx);
+}
+
+function renderYearlyReturns(ctx){
+  const {bt, bmList, evalDates}=ctx;
+  const series=[
+    {name:'動態 MPT', rets:bt.dyn, color:'#45C4A0'},
+    {name:'靜態 MPT', rets:bt.sta, color:'#D9A54B'},
+    {name:'等權重配置', rets:bt.ew, color:'#5B9BD9'},
+    ...bmList.map((b,j)=>({name:b.name+'（Benchmark）', rets:b.slice, color:bmPalette[j%bmPalette.length], bm:true}))
+  ];
+  const years=[...new Set(evalDates.map(d=>d.getUTCFullYear()))];
+  const firstYear=years[0], lastYear=years[years.length-1];
+  const yearCounts={}; evalDates.forEach(d=>{ const y=d.getUTCFullYear(); yearCounts[y]=(yearCounts[y]||0)+1; });
+  const table=series.map(s=>{
+    const prod={}; 
+    s.rets.forEach((r,i)=>{ const y=evalDates[i].getUTCFullYear(); prod[y]=(prod[y]||1)*(1+r); });
+    return years.map(y=>(prod[y]-1)*100);
+  });
+  const partial=y=> (y===firstYear||y===lastYear);
+  document.getElementById('yearlySub').textContent=
+    `各曆年報酬率（${firstYear}–${lastYear}）。首尾年份若非完整年度（以評估期間實際交易日計算）以 * 標示。`;
+  document.querySelector('#yearlyTable thead tr').innerHTML='<th>年度</th>'+series.map(s=>`<th>${s.name}</th>`).join('');
+  document.querySelector('#yearlyTable tbody').innerHTML=years.map((y,yi)=>{
+    const cells=series.map((s,si)=>{ const v=table[si][yi]; return `<td class="${v>=0?'pos':'neg'}">${v.toFixed(2)}%</td>`; }).join('');
+    return `<tr><td>${y}${partial(y)&&yearCounts[y]<240?'*':''}（${yearCounts[y]}日）</td>${cells}</tr>`;
+  }).join('');
+  if(charts.yearly) charts.yearly.destroy();
+  charts.yearly=new Chart(document.getElementById('yearlyChart'), {
+    type:'bar',
+    data:{ labels:years.map(y=>String(y)), datasets: series.map((s,si)=>({
+      label:s.name, data:table[si], backgroundColor:s.color+'AA', borderColor:s.color, borderWidth:1
+    }))},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      scales:{ x:{ticks:{color:'#5B6472'}, grid:{display:false}},
+               y:{ticks:{color:'#5B6472', callback:v=>v+'%'}, grid:{color:'#1D222B'}, title:{display:true,text:'曆年報酬率 (%)',color:'#8B93A3'}} },
+      plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12}}}
+    }
+  });
 }
 
 function renderRollingReturnsPanel(ctx){
