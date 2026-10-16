@@ -475,6 +475,31 @@
             <table id="rebalTable"><thead><tr></tr></thead><tbody></tbody></table>
           </div>
         </div>
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div>
+              <h3>滾動報酬分析</h3>
+              <p class="sub" id="rollSub">滾動視窗年化報酬率：動態 MPT 配置 vs 各 Benchmark</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:11.5px;color:var(--text-dim);white-space:nowrap;">滾動視窗（交易日）</label>
+              <input type="number" id="p_rollWindow" value="250" step="10" min="10" style="width:72px;">
+              <button type="button" class="pool-btn add" id="rollApplyBtn" style="width:auto;height:auto;padding:4px 10px;font-size:11.5px;">套用</button>
+            </div>
+          </div>
+          <div id="rollWarn" class="field-hint" style="display:none;color:var(--amber);"></div>
+          <div id="rollStatsWrap" style="overflow-x:auto;margin-top:10px;">
+            <table id="rollStatsTable">
+              <thead><tr>
+                <th>配置</th><th>平均年化報酬率</th><th>中位數</th><th>標準差</th><th>最低</th><th>最高</th><th>正報酬機率（勝率）</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="rollOutperformWrap" class="field-hint" style="margin-top:4px;"></div>
+          <div class="chart-box tall" style="margin-top:14px;"><canvas id="rollLineChart"></canvas></div>
+          <div class="chart-box" style="margin-top:14px;"><canvas id="rollHistChart"></canvas></div>
+        </div>
       </div>
 
       <div class="tab-panel" id="tab-strategies">
@@ -607,6 +632,45 @@ function kdeAt(data, points){
     for(let i=0;i<n;i++){ const z=(x-data[i])/h; sum+=Math.exp(-0.5*z*z); }
     return sum/(n*h*Math.sqrt(2*Math.PI));
   });
+}
+function sharedBinsHistogram(seriesArr, nbins){
+  const all=seriesArr.flat();
+  const mn=Math.min(...all), mx=Math.max(...all);
+  const width=(mx-mn)/nbins || 1e-9;
+  const centers=Array.from({length:nbins},(_,i)=>mn+width*(i+0.5));
+  const densities=seriesArr.map(data=>{
+    const counts=new Array(nbins).fill(0);
+    data.forEach(x=>{ let b=Math.floor((x-mn)/width); if(b>=nbins)b=nbins-1; if(b<0)b=0; counts[b]++; });
+    return counts.map(c=>c/(data.length*width));
+  });
+  return {centers, densities};
+}
+
+/* =====================================================================
+   ROLLING RETURNS ANALYSIS (動態 MPT vs 各 Benchmark)
+   滾動視窗年化報酬率：對每個等長滾動視窗，比較視窗起點（前一視窗末端的累積淨值，
+   第一個視窗則以 1.0 為起點）與視窗終點的累積淨值比值，年化後得到該視窗的滾動報酬率。
+   與 MATLAB MPTver9.m Step 11 的滾動報酬率分析方法一致，並擴充為可同時比較多個 Benchmark。
+   ===================================================================== */
+function computeRollingReturns(equity, windowLen, tradingDays){
+  const L=equity.length;
+  if(L<windowLen) return null;
+  const n=L-windowLen+1;
+  const annFactor=tradingDays/windowLen;
+  const out=new Array(n);
+  for(let k=0;k<n;k++){
+    const endVal=equity[k+windowLen-1];
+    const startVal= k===0 ? 1.0 : equity[k-1];
+    out[k]=(Math.pow(endVal/startVal, annFactor)-1)*100;
+  }
+  return out;
+}
+function rollingStats(arr){
+  return {
+    mean: mean(arr), median: percentile(arr,50), std: std(arr),
+    min: Math.min(...arr), max: Math.max(...arr),
+    winRate: arr.filter(v=>v>0).length/arr.length*100
+  };
 }
 
 /* =====================================================================
@@ -1432,11 +1496,15 @@ let paramGridState=[
 function getAxisDefsForSidebar(){
   const {names}=getSelectedStrategies();
   const maxLev=parseFloat(document.getElementById('p_maxlev').value)||1;
+  const lb=names.map((_,i)=>{
+    const el=document.getElementById('lb_'+i);
+    return el? (parseFloat(el.value)||0) : 0;
+  });
   const ub=names.map((_,i)=>{
     const el=document.getElementById('ub_'+i);
     return el? (parseFloat(el.value)||maxLev) : maxLev;
   });
-  return getAxisDefs({P:{names}, lb:[], ub, maxLev});
+  return getAxisDefs({P:{names}, lb, ub, maxLev});
 }
 
 function updateParamGridInfo(){
@@ -1850,6 +1918,98 @@ function renderOverviewTab(ctx){
   staTbody.innerHTML=P.names.map((name,i)=>`<tr><td>${name}</td><td>${fmtPct(bt.wStatic[i])}</td></tr>`).join('');
 
   renderRebalanceTable(bt, evalDates, P.names);
+  renderRollingReturnsPanel(ctx);
+}
+
+function renderRollingReturnsPanel(ctx){
+  const {dynMetrics, bmList, evalDates, tradingDays}=ctx;
+  const btn=document.getElementById('rollApplyBtn');
+  const warnEl=document.getElementById('rollWarn');
+
+  function run(){
+    const windowLen=Math.max(10, parseInt(document.getElementById('p_rollWindow').value,10)||250);
+    const dynEq=dynMetrics.equity;
+
+    if(dynEq.length<windowLen){
+      warnEl.style.display='block';
+      warnEl.textContent=`⚠ 評估期間總天數（${dynEq.length} 天）小於滾動視窗長度（${windowLen} 天），無法執行滾動報酬分析，請縮小視窗或放寬日期範圍。`;
+      document.querySelector('#rollStatsTable tbody').innerHTML='';
+      document.getElementById('rollOutperformWrap').innerHTML='';
+      if(charts.rollLine){ charts.rollLine.destroy(); charts.rollLine=null; }
+      if(charts.rollHist){ charts.rollHist.destroy(); charts.rollHist=null; }
+      return;
+    }
+    warnEl.style.display='none';
+
+    const rollDyn=computeRollingReturns(dynEq, windowLen, tradingDays);
+    const rollBmList=bmList.map((b,j)=>({name:b.name, roll:computeRollingReturns(b.metrics.equity, windowLen, tradingDays), color:bmPalette[j%bmPalette.length]}));
+    const rollDates=evalDates.slice(windowLen-1).map(d=>fmtDate(d));
+    const n=rollDyn.length;
+
+    document.getElementById('rollSub').textContent=
+      `滾動視窗 ${windowLen} 交易日（約 ${(windowLen/tradingDays).toFixed(1)} 年）・ 共 ${n} 個滾動樣本`;
+
+    const sDyn=rollingStats(rollDyn);
+    const statRow=(label,s,cls)=>`<tr${cls?` style="color:${cls};"`:''}><td>${label}</td>
+      <td class="${s.mean>=0?'pos':'neg'}">${s.mean.toFixed(2)}%</td>
+      <td>${s.median.toFixed(2)}%</td>
+      <td>${s.std.toFixed(2)}%</td>
+      <td class="neg">${s.min.toFixed(2)}%</td>
+      <td class="pos">${s.max.toFixed(2)}%</td>
+      <td>${s.winRate.toFixed(1)}%</td></tr>`;
+    let rows=statRow('動態 MPT', sDyn);
+    rollBmList.forEach(b=> rows+=statRow(b.name+'（Benchmark）', rollingStats(b.roll), 'var(--amber)'));
+    document.querySelector('#rollStatsTable tbody').innerHTML=rows;
+
+    document.getElementById('rollOutperformWrap').innerHTML=rollBmList.map(b=>{
+      const outPct=rollDyn.filter((v,k)=>v>b.roll[k]).length/n*100;
+      return `<div>★ 動態 MPT 超越 <b>${b.name}</b> 之滾動勝率：<span class="${outPct>=50?'pos':'neg'}">${outPct.toFixed(1)}%</span></div>`;
+    }).join('');
+
+    if(charts.rollLine) charts.rollLine.destroy();
+    charts.rollLine=new Chart(document.getElementById('rollLineChart'), {
+      type:'line',
+      data:{ labels:rollDates, datasets:[
+        {label:'動態 MPT', data:rollDyn, borderColor:'#45C4A0', borderWidth:1.8, pointRadius:0},
+        ...rollBmList.map(b=>({label:b.name, data:b.roll, borderColor:b.color, borderWidth:1, pointRadius:0}))
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index', intersect:false},
+        scales:{
+          x:{ticks:{maxTicksLimit:10, color:'#5B6472'}, grid:{color:'#1D222B'}},
+          y:{ticks:{color:'#5B6472', callback:v=>v+'%'}, grid:{color:'#1D222B'}, title:{display:true,text:'滾動年化報酬率 (%)',color:'#8B93A3'}}
+        },
+        plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12}}}
+      }
+    });
+
+    const allSeries=[rollDyn, ...rollBmList.map(b=>b.roll)];
+    const {centers, densities}=sharedBinsHistogram(allSeries, 24);
+    const colors=['#45C4A0', ...rollBmList.map(b=>b.color)];
+    const names=['動態 MPT', ...rollBmList.map(b=>b.name)];
+    if(charts.rollHist) charts.rollHist.destroy();
+    charts.rollHist=new Chart(document.getElementById('rollHistChart'), {
+      data:{ datasets: allSeries.flatMap((series,i)=>{
+        const kde=kdeAt(series, centers);
+        return [
+          {type:'bar', label:names[i]+' 密度', data:centers.map((x,k)=>({x,y:densities[i][k]})), backgroundColor:colors[i]+'33', borderColor:colors[i]+'66', borderWidth:1},
+          {type:'line', label:names[i]+' KDE', data:centers.map((x,k)=>({x,y:kde[k]})), borderColor:colors[i], borderWidth:1.8, pointRadius:0, fill:false}
+        ];
+      })},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        scales:{
+          x:{type:'linear', ticks:{color:'#5B6472'}, grid:{color:'#1D222B'}, title:{display:true,text:'滾動年化報酬率 (%)',color:'#8B93A3'}},
+          y:{ticks:{display:false}, grid:{color:'#1D222B'}, title:{display:true,text:'機率密度',color:'#8B93A3'}}
+        },
+        plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12, filter:item=>item.text.endsWith('KDE')}}}
+      }
+    });
+  }
+
+  btn.onclick=run;
+  run();
 }
 
 function renderRebalanceTable(bt, evalDates, names){
@@ -1911,11 +2071,11 @@ function getAxisDefs(ctx){
     {id:'lookback', label:'回顧視窗（天）', min:60, max:500, round:true},
     {id:'rebal', label:'再平衡週期（天）', min:20, max:120, round:true},
     {id:'lambda', label:'λ 風險厭惡係數', min:0.3, max:3, round:false},
-    {id:'maxlev', label:'最大總槓桿', min:Math.max(0.2,maxLev*0.3), max:Math.max(1.5,maxLev*1.5), round:false},
   ];
   P.names.forEach((name,i)=>{
-    const curUb=ub[i]!=null? ub[i] : maxLev;
-    defs.push({id:'ub_'+i, label:name+'（槓桿上限）', min:0, max:Math.max(0.2,curUb*1.5), round:false, stratIdx:i});
+    const curLb=(lb && lb[i]!=null)? lb[i] : 0;
+    const curUb=(ub && ub[i]!=null)? ub[i] : maxLev;
+    defs.push({id:'wt_'+i, label:name+'（實際配置比例）', min:curLb, max:curUb, round:false, stratIdx:i});
   });
   return defs;
 }
@@ -1926,7 +2086,7 @@ function heatmapPanelHtml(ctx){
   return `
     <div class="panel-card">
       <h3>參數敏感度二維熱圖</h3>
-      <p class="sub">在兩個可調參數（回顧視窗／再平衡週期／λ／最大總槓桿／個別策略槓桿上限，可任選其二）之間做網格掃描，觀察目標指標是否在一大片區域都穩健，而非只在單一組合突出尖峰——後者正是過擬合的典型警訊。此分析獨立於上方 PBO/DSR 開關，點下方按鈕才會計算。</p>
+      <p class="sub">在兩個可調參數（回顧視窗／再平衡週期／λ／個別資產實際配置比例，可任選其二）之間做網格掃描，觀察目標指標是否在一大片區域都穩健，而非只在單一組合突出尖峰——後者正是過擬合的典型警訊。個別資產實際配置比例軸會將該資產的配置固定在掃描值（其餘資產仍在「04 個別策略槓桿上下限」設定範圍內由優化器重新分配）。此分析獨立於上方 PBO/DSR 開關，點下方按鈕才會計算。</p>
       <div class="row2">
         <div>
           <label>X 軸參數</label>
@@ -2002,11 +2162,12 @@ function applyGridOverrides(baseLookback, baseRebal, baseLambda, baseMaxLev, bas
     if(axisId==='lookback') effLookback=Math.max(5,Math.round(v));
     else if(axisId==='rebal') effRebal=Math.max(1,Math.round(v));
     else if(axisId==='lambda') effLambda=Math.max(1e-3,v);
-    else if(axisId==='maxlev') effMaxLev=v;
-    else if(axisId.startsWith('ub_')){
+    else if(axisId.startsWith('wt_')){
       const i=parseInt(axisId.slice(3),10);
-      effUb[i]=v;
-      if(effLb[i]>v) effLb[i]=0; // 槓桿上限掃到低於原下限時，放寬下限避免必然無解
+      // 固定該資產的實際配置比例：上下限皆鎖在掃描值 v，其餘資產仍在各自04模組設定的
+      // 上下限內由優化器重新分配；若因此與其他資產限制衝突導致無解，runFastBacktest
+      // 會自動沿用前一期權重（與既有槓桿掃描的無解回退邏輯一致）。
+      effLb[i]=v; effUb[i]=v;
     }
   });
   return {effLookback, effRebal, effLambda, effMaxLev, effLb, effUb};
