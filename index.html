@@ -307,7 +307,7 @@
       <h2><span class="num">05</span> 進階檢驗模組</h2>
 
       <h3 style="margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--text-dim);">參數網格設定（PBO/DSR 與 WFA 共用）</h3>
-      <div class="field-hint" style="margin-top:0;">下方自選的參數維度會同時供「PBO/DSR」的 CSCV 網格與「前向分析 WFA」各滾動區段的樣本內搜尋使用，可新增任意數量的參數維度（不限於回顧視窗、λ 兩個），組合數＝各維度網格點數相乘。若不新增任何維度，兩個模組將只用側欄目前設定的單一組固定參數執行（不做網格搜尋）。</div>
+      <div class="field-hint" style="margin-top:0;">下方自選的參數維度會同時供「PBO/DSR」的 CSCV 網格與「前向分析 WFA」各滾動區段的樣本內搜尋使用，可新增任意數量的優化器參數維度（回顧視窗、再平衡週期、λ；個別資產實際配置比例會覆蓋優化器的決定，不適合用來檢驗優化器，僅保留在下方「參數敏感度二維熱圖」），組合數＝各維度網格點數相乘。若不新增任何維度，兩個模組將只用側欄目前設定的單一組固定參數執行（不做網格搜尋）。</div>
       <div id="paramGridRows"></div>
       <button type="button" class="pool-btn add" id="paramGridAddBtn" style="width:auto;height:auto;padding:4px 10px;font-size:11.5px;margin-top:4px;">＋ 新增參數</button>
       <div class="field-hint" id="paramGridInfo" style="margin-top:8px;"></div>
@@ -853,7 +853,7 @@ function runBacktest(returns, lookback, rebalPeriod, lambda, lb, ub, maxLev){
   return {dyn, sta, ew, wHistDyn, wStatic, numEval, rebalanceLog};
 }
 
-function runFastBacktest(returns, winLen, lambda, rebalPeriod, maxLev, lb, ub, maxLookbackAlign){
+function runFastBacktest(returns, winLen, lambda, rebalPeriod, maxLev, lb, ub, maxLookbackAlign, stats){
   const T=returns.length, N=lb.length;
   const outLen=T-maxLookbackAlign;
   const p=new Array(outLen).fill(0);
@@ -865,6 +865,7 @@ function runFastBacktest(returns, winLen, lambda, rebalPeriod, maxLev, lb, ub, m
       const win=returns.slice(start,i);
       const mu=meanVec(win), sigma=covMatrix(win);
       const wOpt=solveQP(mu, sigma, lb, ub, maxLev, lambda);
+      if(stats){ stats.total=(stats.total||0)+1; if(!wOpt) stats.fail=(stats.fail||0)+1; }
       if(wOpt) curW=wOpt;
     }
     const today=returns[i];
@@ -982,6 +983,19 @@ function computePBODSR(returns, baseParams, paramCombos, defs, tradingDays, onPr
    情況下，是否仍能維持樣本外績效（而不是只在單一固定參數、單一樣本內最適
    下看起來好看）。
    ===================================================================== */
+function fixedWeightBacktest(rows, w0, rebalPeriod){
+  const N=w0.length; const out=new Array(rows.length);
+  let cur=w0.slice();
+  for(let i=0;i<rows.length;i++){
+    if(i % rebalPeriod===0) cur=w0.slice();
+    const today=rows[i]; let r=0;
+    for(let j=0;j<N;j++) r+=cur[j]*today[j];
+    out[i]=r;
+    cur=cur.map((w,j)=>w*(1+today[j])/(1+r));
+  }
+  return out;
+}
+
 function runWalkForward(returns, isLen, oosLen, baseParams, paramCombos, defs, selectMetric, tradingDays, riskFree, onProgress){
   const {lookback, rebal, lambda, maxLev, lb, ub}=baseParams;
   const maxLookback=Math.max(lookback, ...paramCombos.map(c=> c.lookback!=null? Math.max(5,Math.round(c.lookback)) : lookback));
@@ -999,6 +1013,8 @@ function runWalkForward(returns, isLen, oosLen, baseParams, paramCombos, defs, s
 
   const segments=[];
   const allOosReturns=[];
+  const allEwOos=[], allIsStaticOos=[];
+  let fbTotal=0, fbFail=0;
 
   segmentsMeta.forEach((seg,k)=>{
     if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：樣本內參數搜尋（${paramCombos.length} 組組合）...`);
@@ -1024,13 +1040,28 @@ function runWalkForward(returns, isLen, oosLen, baseParams, paramCombos, defs, s
     const label=comboLabel(bestCombo, defs);
     if(onProgress) onProgress(`WFA 區段 ${k+1}/${segmentsMeta.length}：套用最佳參數（${label}）跑樣本外...`);
     const sliceProd=returns.slice(dataStart, seg.oosEnd); // 長度 = maxLookback+isLen+oosLen
-    const prodOut=runFastBacktest(sliceProd, bestEff.effLookback, bestEff.effLambda, bestEff.effRebal, bestEff.effMaxLev, bestEff.effLb, bestEff.effUb, maxLookback);
+    const fbStats={total:0, fail:0};
+    const prodOut=runFastBacktest(sliceProd, bestEff.effLookback, bestEff.effLambda, bestEff.effRebal, bestEff.effMaxLev, bestEff.effLb, bestEff.effUb, maxLookback, fbStats);
     const oosReturns=prodOut.slice(isLen);
     const oosMetrics= oosReturns.length>1 ? computeMetrics(oosReturns, tradingDays, riskFree) : null;
 
+    // 基準：等權重（1/N）與「僅用該段 IS 資料求一次 MPT 後持有」的 IS 靜態 MPT，皆跑同一段 OOS
+    const oosRows=returns.slice(seg.isEnd, seg.oosEnd);
+    const Nn=oosRows[0].length;
+    const ewOos=fixedWeightBacktest(oosRows, new Array(Nn).fill(1/Nn), rebal);
+    const isRows=returns.slice(seg.isStart, seg.isEnd);
+    let wIs=solveQP(meanVec(isRows), covMatrix(isRows), lb, ub, maxLev, lambda);
+    if(!wIs) wIs=new Array(Nn).fill(maxLev/Nn);
+    const isStaticOos=fixedWeightBacktest(oosRows, wIs, rebal);
+    allEwOos.push(...ewOos); allIsStaticOos.push(...isStaticOos);
+    const ewMetrics= ewOos.length>1 ? computeMetrics(ewOos, tradingDays, riskFree) : null;
+    const isStaticMetrics= isStaticOos.length>1 ? computeMetrics(isStaticOos, tradingDays, riskFree) : null;
+    fbTotal+=fbStats.total; fbFail+=fbStats.fail;
+
     segments.push({
       segIdx:k, isStartIdx:seg.isStart, isEndIdx:seg.isEnd, oosEndIdx:seg.oosEnd,
-      bestCombo, comboLabel:label, isScore:bestScore, isMetrics:bestIsMetrics, oosMetrics
+      bestCombo, comboLabel:label, isScore:bestScore, isMetrics:bestIsMetrics, oosMetrics,
+      ewMetrics, isStaticMetrics, fbTotal:fbStats.total, fbFail:fbStats.fail
     });
     if(oosMetrics) allOosReturns.push(...oosReturns);
   });
@@ -1042,8 +1073,21 @@ function runWalkForward(returns, isLen, oosLen, baseParams, paramCombos, defs, s
   const winRate= validSegs.length>0 ? validSegs.filter(s=>s.oosMetrics[selectMetric]>0).length/validSegs.length*100 : 0;
   const efficiency= avgIsScore!==0 ? avgOosScore/avgIsScore : null;
 
+  const baselines=[
+    {key:'ew', name:'等權重 (1/N)', stitched: allEwOos.length>1? computeMetrics(allEwOos, tradingDays, riskFree):null},
+    {key:'isStatic', name:'IS 靜態 MPT（每段只用樣本內求一次後持有）', stitched: allIsStaticOos.length>1? computeMetrics(allIsStaticOos, tradingDays, riskFree):null}
+  ].map(b=>{
+    const mk= b.key==='ew' ? 'ewMetrics' : 'isStaticMetrics';
+    const comparable=validSegs.filter(sg=>sg[mk]);
+    const beat=comparable.filter(sg=>sg.oosMetrics[selectMetric]>sg[mk][selectMetric]).length;
+    b.beatRate= comparable.length? beat/comparable.length*100 : null;
+    b.avgScore= comparable.length? mean(comparable.map(sg=>sg[mk][selectMetric])) : null;
+    return b;
+  });
+  const fallbackRate= fbTotal>0 ? fbFail/fbTotal*100 : 0;
+
   return {
-    segments, stitchedReturns:allOosReturns, stitchedMetrics,
+    segments, stitchedReturns:allOosReturns, stitchedMetrics, baselines, fallbackRate, fbTotal, fbFail,
     avgIsScore, avgOosScore, efficiency, winRate, selectMetric, isLen, oosLen
   };
 }
@@ -1512,7 +1556,7 @@ function getAxisDefsForSidebar(){
     const el=document.getElementById('ub_'+i);
     return el? (parseFloat(el.value)||maxLev) : maxLev;
   });
-  return getAxisDefs({P:{names}, lb, ub, maxLev});
+  return getAxisDefs({P:{names}, lb, ub, maxLev}).filter(d=>!d.id.startsWith('wt_'));
 }
 
 function updateParamGridInfo(){
@@ -2250,9 +2294,12 @@ function evalBacktestForParams(ctx, overrides){
   const {P, lb, ub, rebal, maxLev, lambda, lookback, tradingDays, riskFree}=ctx;
   const eff=applyGridOverrides(lookback, rebal, lambda, maxLev, lb, ub, overrides);
   if(eff.effLookback>=P.returns.length-5) return null;
-  const p=runFastBacktest(P.returns, eff.effLookback, eff.effLambda, eff.effRebal, eff.effMaxLev, eff.effLb, eff.effUb, eff.effLookback);
+  const st={total:0, fail:0};
+  const p=runFastBacktest(P.returns, eff.effLookback, eff.effLambda, eff.effRebal, eff.effMaxLev, eff.effLb, eff.effUb, eff.effLookback, st);
   if(!p || p.length<10) return null;
-  return computeMetrics(p, tradingDays, riskFree);
+  const m=computeMetrics(p, tradingDays, riskFree);
+  m.fbRate= st.total? st.fail/st.total*100 : 0;
+  return m;
 }
 
 function heatColor(v, min, max){
@@ -2269,7 +2316,7 @@ function heatColor(v, min, max){
   return `rgba(${r.toFixed(0)},${g.toFixed(0)},${b.toFixed(0)},.6)`;
 }
 
-function renderHeatmapTable(xVals, yVals, grid, xLabel, yLabel, minV, maxV){
+function renderHeatmapTable(xVals, yVals, grid, xLabel, yLabel, minV, maxV, fbGrid){
   let html=`<table class="heatmap-table"><thead><tr><th>${yLabel} ＼ ${xLabel}</th>`;
   xVals.forEach(x=> html+=`<th>${fmtNum(x)}</th>`);
   html+='</tr></thead><tbody>';
@@ -2278,8 +2325,10 @@ function renderHeatmapTable(xVals, yVals, grid, xLabel, yLabel, minV, maxV){
     for(let xi=0;xi<xVals.length;xi++){
       const v=grid[yi][xi];
       const bg=heatColor(v,minV,maxV);
-      const label=isFinite(v)? v.toFixed(2) : '—';
-      html+=`<td style="background:${bg};text-align:center;" title="${xLabel}=${fmtNum(xVals[xi])}, ${yLabel}=${fmtNum(yVals[yi])}">${label}</td>`;
+      const fb=fbGrid? fbGrid[yi][xi] : 0;
+      const label=isFinite(v)? v.toFixed(2)+(fb>0?'†':'') : '—';
+      const fbTip=fb>0? `（⚠ ${fb.toFixed(0)}% 的再平衡因無可行解沿用前期權重）` : '';
+      html+=`<td style="background:${bg};text-align:center;${fb>20?'outline:1px dashed var(--amber);':''}" title="${xLabel}=${fmtNum(xVals[xi])}, ${yLabel}=${fmtNum(yVals[yi])}${fbTip}">${label}</td>`;
     }
     html+='</tr>';
   }
@@ -2311,22 +2360,23 @@ function runHeatmapSweep(ctx, defs){
 
   setTimeout(()=>{
     try{
-      const grid=[];
+      const grid=[], fbGrid=[];
       let minV=Infinity, maxV=-Infinity;
       for(let yi=0; yi<yVals.length; yi++){
-        const row=[];
+        const row=[], fbRow=[];
         for(let xi=0; xi<xVals.length; xi++){
           const overrides={}; overrides[xId]=xVals[xi]; overrides[yId]=yVals[yi];
           const m=evalBacktestForParams(ctx, overrides);
           const v=m? m[metricKey] : NaN;
           if(isFinite(v)){ minV=Math.min(minV,v); maxV=Math.max(maxV,v); }
-          row.push(v);
+          row.push(v); fbRow.push(m? m.fbRate : 0);
         }
-        grid.push(row);
+        grid.push(row); fbGrid.push(fbRow);
       }
-      renderHeatmapTable(xVals, yVals, grid, xDef.label, yDef.label, minV, maxV);
+      renderHeatmapTable(xVals, yVals, grid, xDef.label, yDef.label, minV, maxV, fbGrid);
+      const fbCells=fbGrid.flat().filter(v=>v>0).length;
       document.getElementById('hmInfo').textContent=
-        `完成：共 ${xVals.length*yVals.length} 組參數組合｜X＝${xDef.label}｜Y＝${yDef.label}｜目標指標＝${metricKey.toUpperCase()}｜顏色由珊瑚紅（較差）到青色（較佳）`;
+        `完成：共 ${xVals.length*yVals.length} 組參數組合｜X＝${xDef.label}｜Y＝${yDef.label}｜目標指標＝${metricKey.toUpperCase()}｜顏色由珊瑚紅（較差）到青色（較佳）`+(fbCells>0? `｜† 標示 ${fbCells} 格含「無可行解沿用前期權重」的再平衡（虛線框＝回退超過 20%，該格結果已被回退污染，請謹慎解讀）` : '');
     }catch(err){
       document.getElementById('hmInfo').textContent='掃描失敗：'+err.message;
     }
@@ -2442,6 +2492,25 @@ function renderWfaTab(ctx){
     </div>`;
   }
 
+  if(sm){
+    const mrow=(label,m,extra,cls)=>`<tr${cls?` style="color:${cls};"`:''}><td>${label}</td>
+      <td class="${m.cagr>=0?'pos':'neg'}">${fmtPct(m.cagr)}</td><td>${fmtNum(m.sharpe)}</td><td>${fmtNum(m.sortino)}</td>
+      <td class="neg">${fmtPct(m.mdd)}</td><td>${fmtNum(m.calmar)}</td><td>${fmtNum(m.upi)}</td><td>${extra}</td></tr>`;
+    const brows=wfaResult.baselines.filter(b=>b.stitched).map(b=>
+      mrow(b.name, b.stitched, b.beatRate===null?'—':b.beatRate.toFixed(1)+'%', 'var(--amber)')).join('');
+    const fr=wfaResult.fallbackRate;
+    html += `
+    <div class="panel-card" style="margin-top:14px;">
+      <h3>優化器 vs 無優化基準（同一段樣本外）</h3>
+      <p class="sub">每個 OOS 區段同時跑三種做法：WFA 優化器（IS 選出的參數）、等權重、以及只用該段樣本內資料求一次 MPT 後持有的靜態配置。若優化器的拼接 OOS 績效或區段勝率沒有明顯優於後兩者，代表動態優化在這份資料上沒有多創造價值。最右欄為「優化器該區段 ${metricLabel} 高於基準的區段比例」。</p>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th>做法</th><th>拼接 OOS CAGR</th><th>Sharpe</th><th>Sortino</th><th>MDD</th><th>Calmar</th><th>UPI</th><th>優化器區段勝率</th></tr></thead>
+        <tbody>${mrow('WFA 優化器', sm, '—')}${brows}</tbody>
+      </table></div>
+      <div class="field-hint" style="margin-top:8px;${fr>10?'color:var(--amber);':''}">樣本外再平衡時優化器無可行解而沿用前期權重的比例：${fr.toFixed(1)}%（${wfaResult.fbFail}/${wfaResult.fbTotal} 次）${fr>10?'　⚠ 比例偏高，優化器結果可能被回退污染，請檢查 04 的上下限與總槓桿是否相容。':''}</div>
+    </div>`;
+  }
+
   const rows=wfaResult.segments.map(seg=>{
     const isStartD = P.dates[seg.isStartIdx] ? fmtDate(P.dates[seg.isStartIdx]) : '—';
     const isEndD = P.dates[seg.isEndIdx-1] ? fmtDate(P.dates[seg.isEndIdx-1]) : '—';
@@ -2458,6 +2527,7 @@ function renderWfaTab(ctx){
       <td>${oosScore}</td>
       <td>${oosCagr}</td>
       <td>${oosMdd}</td>
+      <td>${seg.fbTotal? (seg.fbFail/seg.fbTotal*100).toFixed(0)+'%' : '—'}</td>
     </tr>`;
   }).join('');
 
@@ -2468,7 +2538,7 @@ function renderWfaTab(ctx){
     <table class="data-table">
       <thead><tr>
         <th>區段</th><th>樣本內期間</th><th>樣本外期間</th><th>該段最佳參數組合</th>
-        <th>IS ${metricLabel}</th><th>OOS ${metricLabel}</th><th>OOS CAGR</th><th>OOS MDD</th>
+        <th>IS ${metricLabel}</th><th>OOS ${metricLabel}</th><th>OOS CAGR</th><th>OOS MDD</th><th>無解回退率</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
