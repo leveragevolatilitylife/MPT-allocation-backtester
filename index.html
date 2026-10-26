@@ -119,7 +119,21 @@
 
   /* ---------- MAIN ---------- */
   #main{flex:1;min-width:0;padding:26px 32px 60px;}
-  .empty-state{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:70vh;max-width:560px;}
+  .empty-state{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;min-height:70vh;max-width:820px;padding:24px 0 48px;}
+  .guide{width:100%;margin-top:18px;}
+  .guide details{border:1px solid var(--border);border-radius:8px;background:var(--panel);margin-bottom:8px;}
+  .guide summary{cursor:pointer;padding:11px 14px;font-size:13.5px;font-weight:600;color:var(--text);list-style:none;}
+  .guide summary::-webkit-details-marker{display:none;}
+  .guide summary::before{content:'▸';display:inline-block;width:16px;color:var(--teal);}
+  .guide details[open] summary::before{content:'▾';}
+  .guide .g-body{padding:2px 16px 14px 30px;font-size:12.5px;line-height:1.85;color:var(--text-dim);}
+  .guide .g-body b{color:var(--text);font-weight:600;}
+  .guide .g-body ul,.guide .g-body ol{margin:4px 0 8px;padding-left:18px;}
+  .guide .g-body code{font-family:var(--mono);font-size:11.5px;color:var(--amber);background:rgba(217,165,75,.08);padding:1px 5px;border-radius:4px;}
+  .guide table{font-size:11.5px;margin:6px 0 10px;border-collapse:collapse;}
+  .guide table th,.guide table td{border:1px solid var(--border);padding:4px 9px;text-align:left;white-space:nowrap;text-transform:none;letter-spacing:0;}
+  .dl-btn{display:inline-flex;align-items:center;gap:6px;margin:6px 0 4px;padding:6px 12px;font-size:12px;font-family:inherit;color:var(--teal);background:transparent;border:1px solid rgba(69,196,160,.45);border-radius:6px;cursor:pointer;}
+  .dl-btn:hover{background:rgba(69,196,160,.12);border-color:var(--teal);}
   .empty-state .tag{font-family:var(--mono);font-size:11px;color:var(--amber);letter-spacing:.14em;margin-bottom:10px;}
   .empty-state h2{font-size:26px;font-weight:600;margin:0 0 14px;line-height:1.4;}
   .empty-state p{color:var(--text-dim);font-size:13.5px;line-height:1.8;margin:0 0 8px;}
@@ -215,6 +229,7 @@
         <input type="file" id="fileInput" accept=".xlsx,.xls">
         <span>📤 上傳 / 更換 Excel</span>
       </div>
+      <button type="button" class="dl-btn" id="sampleDlBtn" title="下載範例 Excel，作為自己資料的格式參考">📥 下載範例檔 multi_strategy_data.xlsx</button>
       <div class="field-hint">預設自動載入 multi_strategy_data.xlsx；想暫時用別份資料測試，可點上方按鈕上傳或拖曳 .xlsx 覆蓋（僅本次瀏覽有效，要更新預設資料請把新檔案上傳取代 GitHub repo 裡的 multi_strategy_data.xlsx）</div>
 
       <div id="sheetPickers" style="display:none;">
@@ -398,13 +413,96 @@
     <div class="empty-state" id="emptyState">
       <div class="tag">GETTING STARTED</div>
       <h2>先上傳策略日報酬 Excel，<br>開始建立你的配置回測。</h2>
-      <p>本平台會完整重現滾動視窗動態 MPT 優化、靜態 MPT 與等權重對照、PBO(CSCV) 與 DSR 可投性檢驗，以及蒙地卡羅未來壓力測試（7 大指標機率分佈）。</p>
+      <p>本平台重現滾動視窗動態 MPT 優化（二次規劃），並與靜態 MPT、等權重及自選 Benchmark 對照，另提供 PBO/DSR 過擬合檢驗、前向分析 WFA、蒙地卡羅壓力測試與 GK 動態提領分析。所有運算都在你的瀏覽器內完成，資料不會上傳到任何伺服器。</p>
       <ol>
-        <li>左側「資料來源」上傳 .xlsx（第一欄為日期，其餘欄為各策略日報酬率）</li>
-        <li>選擇策略資料工作表與 Benchmark 工作表</li>
-        <li>設定滾動優化參數與各策略槓桿上下限</li>
-        <li>按下「執行完整回測與風險分析」</li>
+        <li>左側「01 資料來源」：預設已自動載入 multi_strategy_data.xlsx，也可上傳自己的 .xlsx（可先下載範例檔參考格式）</li>
+        <li>「02」把要納入組合的策略加入「已選」、挑選要比較的 Benchmark，並設定回測起訖日</li>
+        <li>「03」設定滾動優化參數、「04」設定各策略槓桿上下限</li>
+        <li>「05」選擇要開啟的進階檢驗模組，按下「執行完整回測與風險分析」</li>
       </ol>
+
+      <div class="guide">
+        <details open>
+          <summary>範例檔 multi_strategy_data.xlsx 的格式</summary>
+          <div class="g-body">
+            <button type="button" class="dl-btn" id="sampleDlBtn2">📥 下載範例檔 multi_strategy_data.xlsx</button>
+            <p>活頁簿必須包含<b>兩個工作表</b>，名稱固定為 <code>Strategies</code> 與 <code>Benchmarks</code>（平台會依名稱自動辨識；找不到時可在左側手動指定）：</p>
+            <ul>
+              <li><b>Strategies</b>：所有「候選」策略。第一列為標題，<b>第一欄為日期</b>，其餘每一欄是一個策略的<b>日報酬率</b>。你可以放很多個，之後在平台內自由挑選哪些要納入配置。</li>
+              <li><b>Benchmarks</b>：所有「候選」比較基準，格式與 Strategies 相同，可同時挑選多個一起比較。</li>
+            </ul>
+            <p>格式示意（Strategies，前幾欄；數值僅為示意，請以下載的範例檔為準）：</p>
+            <table>
+              <tr><th>Date</th><th>00631L/00635U VIX Rotation+BTD</th><th>00631L/Cash Rotation</th><th>Buy &amp; hold 00631L</th><th>…</th></tr>
+              <tr><td>2026-09-24</td><td>-0.003077</td><td>-0.003077</td><td>-0.003077</td><td>…</td></tr>
+              <tr><td>2026-09-23</td><td>0.012480</td><td>0.012480</td><td>0.012480</td><td>…</td></tr>
+            </table>
+            <p><b>填寫規則（很重要）：</b></p>
+            <ul>
+              <li>報酬率用<b>小數</b>表示：<code>0.0123</code> 代表當日 +1.23%，<code>-0.005</code> 代表 -0.5%。不要用百分比字串（如 "1.23%"）。</li>
+              <li><b>每個策略、Benchmark 的日期必須對齊同一個交易日曆</b>（例如都用台股交易日）。若某策略含有其他市場的交易日，缺漏日會被補 0%，會低估波動度並扭曲相關係數。</li>
+              <li>日期由新到舊或由舊到新皆可，平台會自動排成由舊到新；日期欄請用 Excel 日期格式。</li>
+              <li>空白儲存格視為 0%；欄位標題不可重複、不可留空。標題內的換行會自動轉成空白。</li>
+              <li>報酬欄請設成「數值」格式。若 Excel 把某格誤判成日期時間，平台會自動還原並在資料解析訊息提示。</li>
+              <li>Strategies 與 Benchmarks 兩張工作表請使用<b>相同的日期列</b>（平台以評估期間尾端對齊比較，日期不一致會造成 Benchmark 錯位）。</li>
+            </ul>
+            <p><b>更新預設資料（GitHub Pages）：</b>把新版 Excel 以相同檔名 <code>multi_strategy_data.xlsx</code> 上傳取代 repo 裡的舊檔即可，不用改程式。側欄的「上傳 / 更換 Excel」只在當次瀏覽有效，重新整理後會還原。</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>側欄參數說明（01–05）</summary>
+          <div class="g-body">
+            <ul>
+              <li><b>02 策略與 Benchmark</b>：左欄為可選池、右欄為已選；按 ＋ 加入、✕ 移出。策略至少要有 1 個，Benchmark 至少 1 個。</li>
+              <li><b>回測起訖日</b>：限制使用的資料區間；注意區間前段會先被「回顧視窗」消耗掉，評估績效從回顧視窗之後才開始。</li>
+              <li><b>回顧視窗</b>：每次優化用過去幾個交易日估計期望報酬與共變異數。越短越敏感、越長越穩定但反應慢。</li>
+              <li><b>再平衡週期</b>：每隔幾個交易日重新求解一次權重；期間內權重隨報酬自然漂移。</li>
+              <li><b>λ 風險厭惡係數</b>：目標為最小化 ½wᵀΣw − μᵀw/λ。λ 越大越偏重降低風險，越小越追求報酬。</li>
+              <li><b>最大總槓桿</b>：各策略權重總和上限（1.0 = 100% 持倉；1.5 = 150%）。</li>
+              <li><b>04 個別策略槓桿上下限</b>：每個策略的最低／最高權重。若下限總和超過最大總槓桿、或上限總和低於最大總槓桿，優化無解，該次再平衡會沿用前期權重並以紅字標示。</li>
+              <li><b>無風險利率、年交易日數</b>：用於 Sharpe、Sortino、UPI 等指標的年化。</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>結果頁各分頁怎麼看</summary>
+          <div class="g-body">
+            <ul>
+              <li><b>配置績效總覽</b>：指標總表（CAGR、標準差、下行標準差、Sharpe、Sortino、MDD、Calmar、UI、UPI）、累積淨值（可切對數／線性座標）、回撤曲線、權重演變、靜態 MPT 權重、再平衡歷史紀錄、滾動報酬分析（可調視窗）與逐年報酬比較。</li>
+              <li><b>個別策略 / 相關性</b>：各策略與 Benchmark 的全期間統計，以及策略間報酬相關係數矩陣。</li>
+              <li><b>過擬合檢驗 PBO / DSR</b>：看「在參數網格裡挑樣本內最佳」是否在樣本外失靈。PBO 越低越好（&gt;50% 代表挑選機制偏向擬合雜訊）；DSR 為考慮多重檢定與偏態峰態後的夏普顯著性。下方另有「參數敏感度二維熱圖」，觀察績效是穩健高原還是孤立尖峰；個別資產實際配置比例軸會把該資產權重鎖死，屬於描述性診斷，不能用來證明優化器有效。</li>
+              <li><b>前向分析 WFA</b>：滾動切出「樣本內選參數 → 樣本外實測」的區段並拼接成真實樣本外曲線；OOS/IS 效率比越接近 1 越穩健。下方「優化器 vs 無優化基準」會拿等權重與樣本內靜態 MPT 當對照，檢驗動態優化是否真的多創造價值。</li>
+              <li><b>蒙地卡羅壓力測試</b>：以動態 MPT 歷史日報酬的對數常態參數模擬未來路徑，給出 7 項指標的機率分佈（5%／95% 分位已依指標好壞換算成悲觀／樂觀）。</li>
+              <li><b>GK 動態提領分析</b>：模擬退休提領，採 Guyton-Klinger 護欄（資本保全 −10%、繁榮 +10%、資產跌破初始 50% 視為破產），可選每年／每季／每月提領。</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>參數網格設定與運算時間</summary>
+          <div class="g-body">
+            <ul>
+              <li>「05 進階檢驗模組」最上方的<b>參數網格設定</b>由 PBO/DSR 與 WFA 共用：可新增任意數量的優化器參數維度（回顧視窗、再平衡週期、λ），各自設定最小值、最大值與網格點數；組合數＝各維度點數相乘。</li>
+              <li>不新增任何維度時，兩個模組只用側欄目前的單一組參數（PBO/DSR 至少需要 2 組組合才能執行）。</li>
+              <li>WFA 每個滾動區段都要把整組網格重跑一次，組合數與區段數相乘後運算量很大。以約 2,800 個交易日、28 組網格為例，PBO/DSR 約 30 秒、WFA 約 1.5 分鐘；運算期間瀏覽器會暫時忙碌，請耐心等候，或先關閉不需要的模組。</li>
+              <li>若優化器因上下限與總槓桿不相容而無解，結果會被「沿用前期權重」污染，WFA 與熱圖都會顯示回退比例，請優先檢查 04 的設定。</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>使用上的注意事項</summary>
+          <div class="g-body">
+            <ul>
+              <li>所有結果皆為歷史回測，不代表未來績效；本平台不構成任何投資建議。</li>
+              <li>PBO/DSR、WFA、蒙地卡羅與 GK 都只是在檢查「回測結果可信度」，無法消除資料本身的倖存者偏差、交易成本與滑價、稅負等現實因素（目前回測未計入交易成本）。</li>
+              <li>策略日報酬若已含槓桿或再平衡效果（例如 2 倍 ETF），請確認上下限的意義符合你的預期。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
     </div>
 
     <div id="results" style="display:none;">
@@ -1272,6 +1370,23 @@ let state={
 /* =====================================================================
    UI WIRING — FILE UPLOAD
    ===================================================================== */
+async function downloadSampleFile(){
+  const fname='multi_strategy_data.xlsx';
+  try{
+    const res=await fetch(fname,{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const blob=await res.blob();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  }catch(err){
+    if(state.workbook){ XLSX.writeFile(state.workbook, fname); }
+    else alert('無法取得範例檔（'+err.message+'）。請確認 multi_strategy_data.xlsx 與 index.html 放在同一個資料夾。');
+  }
+}
+['sampleDlBtn','sampleDlBtn2'].forEach(id=>{ const b=document.getElementById(id); if(b) b.addEventListener('click', downloadSampleFile); });
+
 const dropZone=document.getElementById('dropZone');
 const fileInput=document.getElementById('fileInput');
 dropZone.addEventListener('click', ()=>fileInput.click());
