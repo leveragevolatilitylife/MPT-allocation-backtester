@@ -210,6 +210,29 @@
     font-size:11.5px;padding:6px 12px;cursor:pointer;}
   .axis-btn.active{background:rgba(69,196,160,.18);color:var(--teal);}
   .axis-btn:not(:last-child){border-right:1px solid var(--border);}
+
+  /* ---------- 時間段縮放 ---------- */
+  .zoom-bar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:2px 0 10px;}
+  .zoom-presets{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0;}
+  .zoom-presets button{background:var(--panel-2);border:none;color:var(--text-dim);font-family:var(--sans);font-size:11.5px;padding:6px 11px;cursor:pointer;}
+  .zoom-presets button:not(:last-child){border-right:1px solid var(--border);}
+  .zoom-presets button.active{background:rgba(69,196,160,.18);color:var(--teal);}
+  .zoom-dates{display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--text-dim);}
+  .zoom-dates input{width:auto;padding:4px 6px;font-size:11.5px;}
+  .zoom-chk{font-size:11.5px;color:var(--text-dim);display:flex;gap:5px;align-items:center;cursor:pointer;}
+  .zoom-chk input{width:auto;margin:0;}
+  .zbtn{background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim);font-family:var(--sans);font-size:11.5px;padding:5px 10px;border-radius:6px;cursor:pointer;}
+  .zbtn:hover:not(:disabled){border-color:var(--teal);color:var(--teal);}
+  .zbtn:disabled{opacity:.4;cursor:default;}
+  .zoom-brush{position:relative;height:46px;margin:6px 0 4px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2);overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer;}
+  .zoom-brush canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  .zwin{position:absolute;top:0;bottom:0;min-width:6px;background:rgba(69,196,160,.14);border-left:2px solid var(--teal);border-right:2px solid var(--teal);box-shadow:0 0 0 9999px rgba(14,17,22,.62);cursor:grab;}
+  .zwin:active{cursor:grabbing;}
+  .zwin .zh{position:absolute;top:0;bottom:0;width:14px;cursor:ew-resize;}
+  .zwin .zh.l{left:-8px;} .zwin .zh.r{right:-8px;}
+  .zsel{position:absolute;display:none;background:rgba(217,165,75,.16);border:1px solid var(--amber);pointer-events:none;}
+  .zoom-stats{margin-top:14px;}
+  .zoom-stats .sub{margin-bottom:6px;}
 </style>
 </head>
 <body>
@@ -470,7 +493,7 @@
           <summary>結果頁各分頁怎麼看</summary>
           <div class="g-body">
             <ul>
-              <li><b>配置績效總覽</b>：指標總表（CAGR、標準差、下行標準差、Sharpe、Sortino、MDD、Calmar、UI、UPI）、累積淨值（可切對數／線性座標）、回撤曲線、權重演變、靜態 MPT 權重、再平衡歷史紀錄、滾動報酬分析（可調視窗）與逐年報酬比較。</li>
+              <li><b>配置績效總覽</b>：指標總表（CAGR、標準差、下行標準差、Sharpe、Sortino、MDD、Calmar、UI、UPI）、累積淨值（可切對數／線性座標）、回撤曲線、權重演變、靜態 MPT 權重、再平衡歷史紀錄、滾動報酬分析（可調視窗）與逐年報酬比較。累積淨值、回撤、權重與滾動報酬走勢可<b>縮放時間段</b>：用「近 1／3／5 年」按鈕、日期欄位、或拖曳圖上方的總覽小圖選區間；也可在圖上直接拖曳框選放大（Shift＋拖曳平移、Ctrl／⌘＋滾輪縮放、雙擊重設）。縮放後下方會列出所選區間的報酬、年化報酬與最大回撤，並可勾選「區間起點淨值 = 1」讓各曲線從同一起點比較。</li>
               <li><b>個別策略 / 相關性</b>：各策略與 Benchmark 的全期間統計，以及策略間報酬相關係數矩陣。</li>
               <li><b>過擬合檢驗 PBO / DSR</b>：看「在參數網格裡挑樣本內最佳」是否在樣本外失靈。PBO 越低越好（&gt;50% 代表挑選機制偏向擬合雜訊）；DSR 為考慮多重檢定與偏態峰態後的夏普顯著性。下方另有「參數敏感度二維熱圖」，觀察績效是穩健高原還是孤立尖峰；個別資產實際配置比例軸會把該資產權重鎖死，屬於描述性診斷，不能用來證明優化器有效。</li>
               <li><b>前向分析 WFA</b>：滾動切出「樣本內選參數 → 樣本外實測」的區段並拼接成真實樣本外曲線；OOS/IS 效率比越接近 1 越穩健。下方「優化器 vs 無優化基準」會拿等權重與樣本內靜態 MPT 當對照，檢驗動態優化是否真的多創造價值。</li>
@@ -549,15 +572,41 @@
               <button class="axis-btn" data-scale="linear">線性座標</button>
             </div>
           </div>
+          <div class="zoom-bar" id="zoomBar">
+            <div class="zoom-presets" id="zoomPresets">
+              <button type="button" data-zp="all">全部</button>
+              <button type="button" data-zp="1">近 1 年</button>
+              <button type="button" data-zp="3">近 3 年</button>
+              <button type="button" data-zp="5">近 5 年</button>
+              <button type="button" data-zp="ytd">今年以來</button>
+            </div>
+            <div class="zoom-dates"><input type="date" id="zoomFrom"> ～ <input type="date" id="zoomTo"></div>
+            <label class="zoom-chk"><input type="checkbox" id="zoomRebase"> 區間起點淨值 = 1</label>
+            <button type="button" class="zbtn" id="zoomReset" disabled>重設縮放</button>
+          </div>
+          <div class="zoom-brush" id="zoomBrush" title="拖曳亮色視窗平移，拖曳兩端調整範圍，點擊空白處移動視窗">
+            <canvas id="zoomBrushCv"></canvas>
+            <div class="zwin"><i class="zh l"></i><i class="zh r"></i></div>
+          </div>
+          <div class="field-hint" style="margin:2px 0 8px;">圖上拖曳＝框選放大｜Shift＋拖曳（觸控：單指）＝平移｜Ctrl（⌘）＋滾輪（觸控：雙指）＝縮放｜雙擊＝重設。下方回撤、權重、滾動報酬圖會同步縮放。</div>
           <div class="chart-box tall"><canvas id="eqChart"></canvas></div>
+          <div class="zoom-stats">
+            <div class="sub" id="zoomRangeLabel"></div>
+            <div style="overflow-x:auto;">
+              <table id="zoomStatsTable"><thead><tr><th>配置（所選區間）</th><th>區間報酬</th><th>年化報酬</th><th>區間最大回撤</th></tr></thead><tbody></tbody></table>
+            </div>
+            <div class="field-hint">區間報酬與最大回撤皆以區間起點為基準重新計算；區間少於 60 個交易日不顯示年化報酬。</div>
+          </div>
         </div>
         <div class="panel-card">
           <h3>歷史動態潛在回撤曲線</h3>
+          <p class="sub">與「累積淨值走勢」同步縮放（圖上拖曳可框選放大，雙擊重設）</p>
           <div class="chart-box"><canvas id="ddChart"></canvas></div>
         </div>
         <div class="grid-2">
           <div class="panel-card">
             <h3>動態 MPT 持倉權重演變</h3>
+            <p class="sub">與「累積淨值走勢」同步縮放</p>
             <div class="chart-box"><canvas id="weightChart"></canvas></div>
           </div>
           <div class="panel-card">
@@ -595,7 +644,8 @@
             </table>
           </div>
           <div id="rollOutperformWrap" class="field-hint" style="margin-top:4px;"></div>
-          <div class="chart-box tall" style="margin-top:14px;"><canvas id="rollLineChart"></canvas></div>
+          <div class="field-hint" style="margin-top:12px;">滾動年化報酬走勢與「累積淨值走勢」同步縮放（圖上拖曳可框選放大，雙擊重設）；下方統計表與分佈圖仍以全區間計算。</div>
+          <div class="chart-box tall" style="margin-top:6px;"><canvas id="rollLineChart"></canvas></div>
           <div class="chart-box" style="margin-top:14px;"><canvas id="rollHistChart"></canvas></div>
         </div>
         <div class="panel-card">
@@ -1997,6 +2047,245 @@ const percentileLinePlugin={
 };
 Chart.register(percentileLinePlugin);
 
+/* =====================================================================
+   時間段縮放：累積淨值／回撤／權重／滾動報酬 四張圖共用同一個時間範圍
+   ===================================================================== */
+const Z={dates:[],n:0,lo:0,hi:0,eqOrig:null,series:[],td:250};
+const ZOOM_MIN=10;
+const ZCANVAS={eq:'eqChart', dd:'ddChart', weight:'weightChart', rollLine:'rollLineChart'};
+const zq=id=>document.getElementById(id);
+function zLower(arr,v){ let a=0,b=arr.length; while(a<b){ const m=(a+b)>>1; if(arr[m]<v) a=m+1; else b=m; } return a; }
+function zUpper(arr,v){ let a=0,b=arr.length; while(a<b){ const m=(a+b)>>1; if(arr[m]<=v) a=m+1; else b=m; } return a; }
+function zClamp(lo,hi){
+  const n=Z.n;
+  if(n<=ZOOM_MIN) return [0,Math.max(0,n-1)];
+  lo=Math.round(lo); hi=Math.round(hi);
+  if(hi-lo<ZOOM_MIN-1){ const mid=(lo+hi)/2; lo=Math.round(mid-(ZOOM_MIN-1)/2); hi=lo+ZOOM_MIN-1; }
+  if(lo<0){ hi-=lo; lo=0; }
+  if(hi>n-1){ lo-=hi-(n-1); hi=n-1; }
+  return [Math.max(0,lo), hi];
+}
+function zIsFull(){ return Z.lo===0 && Z.hi===Z.n-1; }
+let zRaf=0;
+function setZoom(lo,hi){
+  if(!Z.n) return;
+  [lo,hi]=zClamp(lo,hi);
+  Z.lo=lo; Z.hi=hi;
+  if(zRaf) return;
+  zRaf=requestAnimationFrame(()=>{ zRaf=0; zApply(); });
+}
+function zPresetRange(p){
+  const end=Z.n-1;
+  if(p==='all') return [0,end];
+  const endD=Z.dates[end];
+  const startStr = p==='ytd' ? endD.slice(0,4)+'-01-01' : (+endD.slice(0,4)-(+p))+endD.slice(4);
+  return [Math.min(zLower(Z.dates,startStr),end), end];
+}
+function zPreset(p){ const [lo,hi]=zPresetRange(p); setZoom(lo,hi); }
+
+/* 總覽索引 → 各圖自己的 label 索引（滾動報酬圖的日期從第 window-1 天才開始） */
+function zChartRange(labels){
+  if(labels.length===Z.n && labels[0]===Z.dates[0] && labels[labels.length-1]===Z.dates[Z.n-1]) return [Z.lo,Z.hi];
+  let i0=zLower(labels,Z.dates[Z.lo]), i1=zUpper(labels,Z.dates[Z.hi])-1;
+  i0=Math.min(i0,labels.length-1); i1=Math.max(i1,i0);
+  return [i0,i1];
+}
+function zToOverview(labels,i){
+  if(labels.length===Z.n && labels[0]===Z.dates[0]) return i;
+  return zLower(Z.dates, labels[Math.max(0,Math.min(labels.length-1,i))]);
+}
+function zApplyChart(ch){
+  if(!ch||!ch.data||!ch.options||!Z.n) return;
+  const labels=ch.data.labels, x=ch.options.scales.x;
+  const [i0,i1]=zChartRange(labels);
+  if(i0<=0 && i1>=labels.length-1){ x.min=undefined; x.max=undefined; }
+  else { x.min=i0; x.max=i1; }
+  ch.stop();            // 先停掉進行中的動畫（resize/初次載入），否則舊目標值會蓋掉縮放後的點座標
+  ch.update('none');
+}
+function zRebaseEq(){
+  const ch=charts.eq; if(!ch||!Z.eqOrig) return;
+  const on=zq('zoomRebase').checked;
+  ch.data.datasets.forEach((ds,i)=>{
+    const o=Z.eqOrig[i]; if(!o) return;
+    if(on){ const base=o[Z.lo]; ds.data=o.map(v=>v/base); } else ds.data=o;
+  });
+}
+function zApply(){
+  zRebaseEq();
+  Object.keys(ZCANVAS).forEach(k=>{ if(charts[k]) zApplyChart(charts[k]); });
+  zUI();
+}
+
+/* ---- 區間績效 ---- */
+function zStats(){
+  const tb=document.querySelector('#zoomStatsTable tbody'); if(!tb||!Z.n) return;
+  const days=Z.hi-Z.lo+1;
+  zq('zoomRangeLabel').textContent=`${Z.dates[Z.lo]} ～ ${Z.dates[Z.hi]}（${days.toLocaleString()} 個交易日${zIsFull()?'，全區間':''}）`;
+  tb.innerHTML=Z.series.map(s=>{
+    const eq=s.eq, base=Z.lo>0? eq[Z.lo-1] : 1;
+    const end=eq[Z.hi], ret=end/base-1;
+    const cagr = days>=60 ? Math.pow(end/base, Z.td/days)-1 : NaN;
+    let peak=base, mdd=0;
+    for(let i=Z.lo;i<=Z.hi;i++){ if(eq[i]>peak) peak=eq[i]; const d=eq[i]/peak-1; if(d<mdd) mdd=d; }
+    return `<tr${s.bm?' style="color:var(--amber);"':''}><td>${s.name}</td>
+      <td class="${ret>=0?'pos':'neg'}">${fmtPct(ret)}</td>
+      <td class="${cagr>=0?'pos':'neg'}">${isNaN(cagr)?'—':fmtPct(cagr)}</td>
+      <td class="neg">${fmtPct(mdd)}</td></tr>`;
+  }).join('');
+}
+
+/* ---- 總覽拖曳窗 ---- */
+function zDrawBrush(){
+  const cv=zq('zoomBrushCv'); if(!cv||!Z.series.length) return;
+  const box=cv.parentElement, w=box.clientWidth, h=box.clientHeight;
+  if(!w||!h) return;
+  const dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,w,h);
+  const L=Z.series[0].eq.map(v=>Math.log(Math.max(v,1e-9)));
+  let mn=Infinity,mx=-Infinity; L.forEach(v=>{ if(v<mn) mn=v; if(v>mx) mx=v; });
+  const pad=6, span=(mx-mn)||1;
+  c.beginPath();
+  L.forEach((v,i)=>{ const x=i/(L.length-1)*w, y=h-pad-(v-mn)/span*(h-2*pad); if(i) c.lineTo(x,y); else c.moveTo(x,y); });
+  c.strokeStyle='#45C4A0'; c.lineWidth=1.3; c.stroke();
+}
+function zUI(){
+  if(!Z.n) return;
+  const win=zq('zoomBrush').querySelector('.zwin');
+  const p0=Z.lo/(Z.n-1)*100, p1=Z.hi/(Z.n-1)*100;
+  win.style.left=p0+'%'; win.style.width=Math.max(p1-p0,0.6)+'%';
+  zq('zoomFrom').value=Z.dates[Z.lo]; zq('zoomTo').value=Z.dates[Z.hi];
+  document.querySelectorAll('#zoomPresets button').forEach(b=>{
+    const [lo,hi]=zPresetRange(b.dataset.zp);
+    b.classList.toggle('active', lo===Z.lo && hi===Z.hi);
+  });
+  zq('zoomReset').disabled=zIsFull();
+  zDrawBrush(); zStats();
+}
+
+/* ---- 初始化（每次執行回測後呼叫） ---- */
+function zoomInit(labels, ctx, eqSeries){
+  Z.dates=labels; Z.n=labels.length; Z.lo=0; Z.hi=Z.n-1; Z.td=ctx.tradingDays||250;
+  const names=['動態 MPT','靜態 MPT','等權重配置', ...ctx.bmList.map(b=>b.name+'（Benchmark）')];
+  Z.series=eqSeries.map((eq,i)=>({name:names[i], eq, bm:i>=3}));
+  Z.eqOrig=charts.eq? charts.eq.data.datasets.map(ds=>ds.data) : null;
+  zq('zoomFrom').min=zq('zoomTo').min=labels[0];
+  zq('zoomFrom').max=zq('zoomTo').max=labels[labels.length-1];
+  zq('zoomRebase').checked=false;
+  zBind();
+  zUI();
+}
+
+/* ---- 控制列 ---- */
+document.querySelectorAll('#zoomPresets button').forEach(b=>b.addEventListener('click',()=>zPreset(b.dataset.zp)));
+zq('zoomReset').addEventListener('click',()=>zPreset('all'));
+zq('zoomRebase').addEventListener('change',()=>{ if(Z.n) zApply(); });
+function zDateInput(){
+  if(!Z.n) return;
+  const f=zq('zoomFrom').value, t=zq('zoomTo').value;
+  if(!f||!t) return;
+  let lo=Math.min(zLower(Z.dates,f),Z.n-1), hi=zUpper(Z.dates,t)-1;
+  if(hi<lo){ zUI(); return; }
+  setZoom(lo,hi);
+}
+zq('zoomFrom').addEventListener('change',zDateInput);
+zq('zoomTo').addEventListener('change',zDateInput);
+
+/* ---- 總覽拖曳窗互動：拖曳窗體＝平移，拖曳兩端＝調整範圍，點底圖＝移動窗到該處 ---- */
+(function(){
+  const brush=zq('zoomBrush'); let drag=null;
+  brush.addEventListener('pointerdown',e=>{
+    if(!Z.n) return;
+    const r=brush.getBoundingClientRect(), idx=(e.clientX-r.left)/r.width*(Z.n-1);
+    const t=e.target; let mode;
+    if(t.classList.contains('zh')) mode=t.classList.contains('l')?'l':'r';
+    else if(t.classList.contains('zwin')) mode='move';
+    else { const w=Z.hi-Z.lo; setZoom(idx-w/2, idx+w/2); mode='move'; }
+    drag={mode, x0:e.clientX, lo:Z.lo, hi:Z.hi, w:r.width};
+    if(mode==='move' && !t.classList.contains('zwin')){ drag.lo=Math.round(idx-(Z.hi-Z.lo)/2); drag.hi=drag.lo+(Z.hi-Z.lo); }
+    brush.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  brush.addEventListener('pointermove',e=>{
+    if(!drag) return;
+    const d=(e.clientX-drag.x0)/drag.w*(Z.n-1);
+    if(drag.mode==='move') setZoom(drag.lo+d, drag.hi+d);
+    else if(drag.mode==='l') setZoom(Math.min(drag.lo+d, drag.hi-(ZOOM_MIN-1)), drag.hi);
+    else setZoom(drag.lo, Math.max(drag.hi+d, drag.lo+(ZOOM_MIN-1)));
+  });
+  const end=()=>{ drag=null; };
+  brush.addEventListener('pointerup',end); brush.addEventListener('pointercancel',end);
+  if(window.ResizeObserver) new ResizeObserver(()=>zDrawBrush()).observe(brush);
+})();
+
+/* ---- 圖上互動：滑鼠拖曳＝框選放大；Shift+拖曳／觸控單指＝平移；Ctrl(⌘)+滾輪／雙指＝縮放；雙擊＝重設 ---- */
+function zBind(){
+  Object.keys(ZCANVAS).forEach(k=>{
+    const cv=zq(ZCANVAS[k]); if(!cv||cv._zb) return; cv._zb=true;
+    cv.style.touchAction='pan-y';
+    const box=cv.parentElement;
+    const sel=document.createElement('div'); sel.className='zsel'; box.appendChild(sel);
+    const pts=new Map(); let mode=null, st=null;
+    const px=e=>e.clientX-cv.getBoundingClientRect().left;
+    const ovAt=(ch,x)=> zToOverview(ch.data.labels, ch.scales.x.getValueForPixel(x));
+    const dist=()=>{ const a=[...pts.values()]; return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y); };
+    cv.addEventListener('pointerdown',e=>{
+      const ch=charts[k]; if(!ch||!Z.n) return;
+      if(e.pointerType==='mouse' && e.button!==0 && e.button!==1) return;
+      pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      try{ cv.setPointerCapture(e.pointerId); }catch(_){}
+      if(pts.size===2){
+        const a=[...pts.values()], mx=(a[0].x+a[1].x)/2-cv.getBoundingClientRect().left;
+        mode='pinch'; st={d0:dist(), lo:Z.lo, hi:Z.hi, c:ovAt(ch,mx)}; sel.style.display='none'; return;
+      }
+      mode=(e.pointerType!=='mouse' || e.shiftKey || e.button===1)? 'pan' : 'box';
+      st={x0:px(e), cx0:e.clientX, lo:Z.lo, hi:Z.hi};
+    });
+    cv.addEventListener('pointermove',e=>{
+      if(!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      const ch=charts[k]; if(!ch||!st) return;
+      const area=ch.chartArea;
+      if(mode==='pinch' && pts.size===2){
+        const s=st.d0/Math.max(dist(),1);
+        setZoom(st.c-(st.c-st.lo)*s, st.c+(st.hi-st.c)*s); return;
+      }
+      if(mode==='pan'){
+        const di=-(e.clientX-st.cx0)/area.width*(st.hi-st.lo);
+        setZoom(st.lo+di, st.hi+di);
+      } else if(mode==='box'){
+        const x=px(e), a=Math.max(area.left,Math.min(st.x0,x)), b=Math.min(area.right,Math.max(st.x0,x));
+        sel.style.display='block'; sel.style.left=a+'px'; sel.style.width=Math.max(0,b-a)+'px';
+        sel.style.top=area.top+'px'; sel.style.height=(area.bottom-area.top)+'px';
+      }
+    });
+    const finish=(e,commit)=>{
+      const ch=charts[k];
+      if(mode==='box' && commit && ch && st){
+        const x=px(e);
+        if(Math.abs(x-st.x0)>6){
+          const a=Math.min(x,st.x0), b=Math.max(x,st.x0);
+          setZoom(ovAt(ch,Math.max(ch.chartArea.left,a)), ovAt(ch,Math.min(ch.chartArea.right,b)));
+        }
+      }
+      sel.style.display='none'; pts.delete(e.pointerId);
+      if(pts.size===0){ mode=null; st=null; }
+      else if(pts.size===1 && mode==='pinch'){ mode=null; st=null; }
+    };
+    cv.addEventListener('pointerup',e=>finish(e,true));
+    cv.addEventListener('pointercancel',e=>finish(e,false));
+    cv.addEventListener('dblclick',()=>zPreset('all'));
+    cv.addEventListener('wheel',e=>{
+      if(!(e.ctrlKey||e.metaKey) || !Z.n) return;
+      const ch=charts[k]; if(!ch) return;
+      e.preventDefault();
+      const f=Math.exp(e.deltaY*0.002), c=ovAt(ch,px(e));
+      setZoom(c-(c-Z.lo)*f, c+(Z.hi-c)*f);
+    },{passive:false});
+  });
+}
+
 const bmPalette=['#8B93A3','#C9896B','#6BA3C9','#A3C96B','#C96BAE','#C9C16B'];
 
 function summaryRow(label, m, highlight){
@@ -2080,6 +2369,8 @@ function renderOverviewTab(ctx){
       plugins:{legend:{position:'bottom', labels:{color:'#E7EAEE', boxWidth:10, font:{size:10}}}}
     }
   });
+
+  zoomInit(labels, ctx, [dynMetrics.equity, staMetrics.equity, ewMetrics.equity, ...bmList.map(b=>b.metrics.equity)]);
 
   const staTbody=document.querySelector('#staticTable tbody');
   staTbody.innerHTML=P.names.map((name,i)=>`<tr><td>${name}</td><td>${fmtPct(bt.wStatic[i])}</td></tr>`).join('');
@@ -2191,6 +2482,8 @@ function renderRollingReturnsPanel(ctx){
         plugins:{legend:{labels:{color:'#E7EAEE', boxWidth:12}}}
       }
     });
+
+    if(Z.n) zApplyChart(charts.rollLine);
 
     const allSeries=[rollDyn, ...rollBmList.map(b=>b.roll)];
     const {centers, densities}=sharedBinsHistogram(allSeries, 24);
