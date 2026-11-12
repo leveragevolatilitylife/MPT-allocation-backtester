@@ -117,6 +117,24 @@
   .run-btn:hover{opacity:.88;}
   .run-btn:disabled{background:var(--panel-2);color:var(--text-faint);cursor:not-allowed;}
 
+  /* ---------- 參數設定存檔 ---------- */
+  .preset-box{margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2);}
+  .preset-box h3{margin:0 0 8px;font-size:12.5px;font-weight:600;color:var(--text-dim);}
+  .preset-save-row{display:flex;gap:6px;}
+  .preset-save-row input{flex:1;min-width:0;}
+  .preset-btn{padding:6px 10px;border:1px solid var(--teal);background:transparent;color:var(--teal);border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
+  .preset-btn:hover{background:rgba(69,196,160,.12);}
+  .preset-btn.danger{border-color:var(--border);color:var(--text-faint);padding:4px 8px;font-weight:500;}
+  .preset-btn.danger:hover{border-color:var(--coral);color:var(--coral);background:transparent;}
+  .preset-btn.danger.confirm{border-color:var(--coral);color:var(--coral);}
+  .preset-msg{font-size:11px;line-height:1.5;margin-top:6px;color:var(--text-dim);min-height:1em;}
+  .preset-msg.warn-t{color:var(--amber);}
+  .preset-list{margin-top:8px;max-height:210px;overflow:auto;display:flex;flex-direction:column;gap:4px;}
+  .preset-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border:1px solid var(--border);border-radius:5px;background:var(--panel);}
+  .preset-item.active{border-color:var(--teal);}
+  .preset-item .pname{flex:1;min-width:0;cursor:pointer;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .preset-item .preset-btn{padding:3px 8px;}
+
   /* ---------- MAIN ---------- */
   #main{flex:1;min-width:0;padding:26px 32px 60px;}
   .empty-state{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;min-height:70vh;max-width:820px;padding:24px 0 48px;}
@@ -430,6 +448,17 @@
     </div>
 
     <button class="run-btn" id="runBtn" style="display:none;">執行完整回測與風險分析</button>
+
+    <div class="preset-box" id="presetBox">
+      <h3>參數設定存檔</h3>
+      <div class="preset-save-row">
+        <input type="text" id="presetName" placeholder="為這組設定命名，例如：保守型 60 日">
+        <button type="button" class="preset-btn" id="presetSaveBtn">儲存參數設定</button>
+      </div>
+      <div class="preset-msg" id="presetMsg"></div>
+      <div class="preset-list" id="presetList"></div>
+      <div class="field-hint">設定存在這個瀏覽器內（localStorage），重開網頁後可在此直接載入；同名會覆蓋舊設定，數量不設上限。換瀏覽器或清除網站資料後不會帶過去。</div>
+    </div>
   </aside>
 
   <main id="main">
@@ -442,6 +471,7 @@
         <li>「02」把要納入組合的策略加入「已選」、挑選要比較的 Benchmark，並設定回測起訖日</li>
         <li>「03」設定滾動優化參數、「04」設定各策略槓桿上下限</li>
         <li>「05」選擇要開啟的進階檢驗模組，按下「執行完整回測與風險分析」</li>
+        <li>想保留這組設定：在按鈕下方的「參數設定存檔」輸入名稱後按「儲存參數設定」，下次開啟網頁直接從清單載入（存在本瀏覽器內，數量不限）</li>
       </ol>
 
       <div class="guide">
@@ -1808,6 +1838,158 @@ function wireToggle(id){
   el.addEventListener('click', ()=> el.classList.toggle('on'));
 }
 wireToggle('togPbo'); wireToggle('togWfa'); wireToggle('togMc'); wireToggle('togGk');
+
+/* ---------- 參數設定存檔（localStorage，數量不設上限）---------- */
+const PRESET_KEY='mpt_param_presets_v1';
+const PRESET_INPUT_IDS=['p_tradingDays','p_rf','p_lookback','p_rebal','p_maxlev','p_lambda',
+  'p_wfa_is','p_wfa_oos','p_wfa_metric','p_mcsims','p_mchorizon',
+  'p_gk_portfolio','p_gk_wr','p_gk_inflation','p_gk_years','p_gk_freq','p_gk_sims'];
+const PRESET_TOGGLE_IDS=['togPbo','togWfa','togMc','togGk'];
+let presetMemoryFallback=null, presetActive=null, presetDelArm=null;
+
+function presetRead(){
+  try{
+    const raw=localStorage.getItem(PRESET_KEY);
+    const arr=raw? JSON.parse(raw) : [];
+    return Array.isArray(arr)? arr : [];
+  }catch(e){ return presetMemoryFallback||[]; }
+}
+function presetWrite(arr){
+  try{ localStorage.setItem(PRESET_KEY, JSON.stringify(arr)); presetMemoryFallback=null; return true; }
+  catch(e){ presetMemoryFallback=arr; return false; }
+}
+function presetSay(msg, warn){
+  const el=document.getElementById('presetMsg');
+  el.textContent=msg; el.className='preset-msg'+(warn?' warn-t':'');
+}
+function presetCollect(){
+  const g=id=>document.getElementById(id);
+  const {names:sn, indices:si}=getSelectedStrategies();
+  const bounds={};
+  si.forEach((_,k)=>{
+    const lb=g('lb_'+k), ub=g('ub_'+k);
+    if(lb&&ub) bounds[sn[k]]=[lb.value, ub.value];
+  });
+  const inputs={}; PRESET_INPUT_IDS.forEach(id=>{ if(g(id)) inputs[id]=g(id).value; });
+  const tog={}; PRESET_TOGGLE_IDS.forEach(id=>{ tog[id]=g(id).classList.contains('on'); });
+  return {
+    dataSheet:g('dataSheetSel').value, bmSheet:g('bmSheetSel').value,
+    start:g('p_startDate').value, end:g('p_endDate').value,
+    strat:sn, bm:getSelectedBenchmarks().names,
+    inputs, bounds, tog,
+    grid:paramGridState.map(r=>({paramId:r.paramId,min:r.min,max:r.max,steps:r.steps}))
+  };
+}
+function presetApply(d){
+  const g=id=>document.getElementById(id);
+  if(!state.parsedData){ presetSay('請先載入資料後再套用設定。', true); return; }
+  const notes=[];
+  // 工作表（與目前不同且存在才切換並重新解析）
+  const sheets=(state.workbook&&state.workbook.SheetNames)||[];
+  let changed=false;
+  if(d.dataSheet && d.dataSheet!==g('dataSheetSel').value && sheets.includes(d.dataSheet)){ g('dataSheetSel').value=d.dataSheet; changed=true; }
+  if(d.bmSheet && d.bmSheet!==g('bmSheetSel').value && sheets.includes(d.bmSheet)){ g('bmSheetSel').value=d.bmSheet; changed=true; }
+  if(changed) tryParseSheets();
+  // 策略／Benchmark 依名稱對應
+  const map=(names,pool)=>{
+    const idx=[], miss=[];
+    (names||[]).forEach(n=>{ const i=pool.names.indexOf(n); if(i>=0&&!idx.includes(i)) idx.push(i); else if(i<0) miss.push(n); });
+    return {idx,miss};
+  };
+  const ms=map(d.strat,stratPoolState), mb=map(d.bm,bmPoolState);
+  stratPoolState.selected=ms.idx; bmPoolState.selected=mb.idx;
+  if(ms.miss.length) notes.push('資料中找不到策略：'+ms.miss.join('、'));
+  if(mb.miss.length) notes.push('資料中找不到 Benchmark：'+mb.miss.join('、'));
+  renderStrategyPools(); renderBenchmarkPools();
+  // 一般參數
+  Object.keys(d.inputs||{}).forEach(id=>{ if(g(id)) g(id).value=d.inputs[id]; });
+  refreshSelectionState();
+  // 各策略上下限（依名稱）
+  getSelectedStrategies().names.forEach((n,k)=>{
+    const b=(d.bounds||{})[n]; if(!b) return;
+    const lb=g('lb_'+k), ub=g('ub_'+k);
+    if(lb) lb.value=b[0]; if(ub) ub.value=b[1];
+  });
+  // 回測起訖日（夾在資料範圍內）
+  const clamp=(v,el)=>{ if(!v) return el.value; if(el.min&&v<el.min) return el.min; if(el.max&&v>el.max) return el.max; return v; };
+  const sEl=g('p_startDate'), eEl=g('p_endDate');
+  if(d.start){ const v=clamp(d.start,sEl); if(v!==d.start) notes.push('起始日超出資料範圍，已調整'); sEl.value=v; }
+  if(d.end){ const v=clamp(d.end,eEl); if(v!==d.end) notes.push('結束日超出資料範圍，已調整'); eEl.value=v; }
+  // 參數網格、開關
+  if(Array.isArray(d.grid)){
+    paramGridState.length=0;
+    d.grid.forEach(r=>paramGridState.push({paramId:r.paramId,min:r.min,max:r.max,steps:r.steps}));
+    const valid=new Set(getAxisDefsForSidebar().map(x=>x.id));
+    const before=paramGridState.length;
+    for(let i=paramGridState.length-1;i>=0;i--) if(!valid.has(paramGridState[i].paramId)) paramGridState.splice(i,1);
+    if(paramGridState.length<before) notes.push('部分網格維度在目前策略組合下無效，已略過');
+    renderParamGridRowsUI();
+  }
+  PRESET_TOGGLE_IDS.forEach(id=>{ if(d.tog&&id in d.tog) g(id).classList.toggle('on', !!d.tog[id]); });
+  return notes;
+}
+
+function presetRender(){
+  const list=document.getElementById('presetList');
+  const arr=presetRead();
+  list.innerHTML='';
+  if(!arr.length){
+    list.innerHTML='<div class="pool-empty">（尚未儲存任何設定）</div>';
+    return;
+  }
+  arr.slice().reverse().forEach(p=>{
+    const row=document.createElement('div');
+    row.className='preset-item'+(p.name===presetActive?' active':'');
+    const nm=document.createElement('div'); nm.className='pname'; nm.title='點擊載入：'+p.name;
+    nm.textContent=p.name;
+    nm.addEventListener('click', ()=>presetLoad(p.name));
+    const ld=document.createElement('button'); ld.type='button'; ld.className='preset-btn'; ld.textContent='載入';
+    ld.addEventListener('click', ()=>presetLoad(p.name));
+    const del=document.createElement('button'); del.type='button'; del.className='preset-btn danger';
+    del.textContent=presetDelArm===p.name? '確定刪除？' : '✕';
+    if(presetDelArm===p.name) del.classList.add('confirm');
+    del.title='刪除這組設定';
+    del.addEventListener('click', ()=>{
+      if(presetDelArm!==p.name){ presetDelArm=p.name; presetRender(); return; }
+      presetDelArm=null;
+      presetWrite(presetRead().filter(x=>x.name!==p.name));
+      if(presetActive===p.name) presetActive=null;
+      presetSay('已刪除「'+p.name+'」。');
+      presetRender();
+    });
+    row.append(nm,ld,del);
+    list.appendChild(row);
+  });
+}
+
+function presetSave(){
+  const inp=document.getElementById('presetName');
+  const name=inp.value.trim();
+  if(!name){ presetSay('請先為這組設定命名。', true); inp.focus(); return; }
+  if(!state.parsedData){ presetSay('請先載入資料後再儲存設定。', true); return; }
+  const arr=presetRead();
+  const rec={name, savedAt:Date.now(), data:presetCollect()};
+  const i=arr.findIndex(x=>x.name===name);
+  if(i>=0) arr[i]=rec; else arr.push(rec);
+  const ok=presetWrite(arr);
+  presetActive=name; presetDelArm=null;
+  presetSay(ok? (i>=0? '已覆蓋既有設定「'+name+'」。' : '已儲存「'+name+'」，共 '+arr.length+' 組。')
+              : '瀏覽器不允許寫入本機儲存空間（可能是無痕模式），設定只在本次開啟期間有效。', !ok);
+  presetRender();
+}
+function presetLoad(name){
+  const p=presetRead().find(x=>x.name===name);
+  if(!p) return;
+  const notes=presetApply(p.data);
+  if(notes===undefined) return;
+  presetActive=name; presetDelArm=null;
+  document.getElementById('presetName').value=name;
+  presetSay('已載入「'+name+'」，可直接按下方「執行完整回測與風險分析」。'+(notes.length? '　⚠ '+notes.join('；') : ''), notes.length>0);
+  presetRender();
+}
+document.getElementById('presetSaveBtn').addEventListener('click', presetSave);
+document.getElementById('presetName').addEventListener('keydown', e=>{ if(e.key==='Enter') presetSave(); });
+presetRender();
 
 /* tabs */
 document.querySelectorAll('.tab-btn').forEach(btn=>{
