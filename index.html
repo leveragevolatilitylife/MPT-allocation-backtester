@@ -349,7 +349,7 @@
           <input type="number" id="p_lambda" value="1.0" step="0.1">
         </div>
       </div>
-      <div class="field-hint">槓桿以倍數表示：1.0 = 總持倉 100%。</div>
+      <div class="field-hint">槓桿以倍數表示：1.0 = 總持倉 100%。<br>λ 提示：目標函數為 ½w′Σw − μ′w/λ，μ、Σ 以日報酬計算，λ 偏小（例如 1）時報酬項遠大於風險項，優化器會集中押注近期報酬最高的少數策略，夏普與 UPI 常不如等權重；λ 調大（約 30～100）則偏向低風險配置。可用「最小變異數配置」「反波動率配置」兩條不使用預期報酬的曲線當對照。</div>
     </div>
 
     <div class="side-section" id="boundsSection" style="display:none;">
@@ -465,7 +465,7 @@
     <div class="empty-state" id="emptyState">
       <div class="tag">GETTING STARTED</div>
       <h2>先上傳策略日報酬 Excel，<br>開始建立你的配置回測。</h2>
-      <p>本平台重現滾動視窗動態 MPT 優化（二次規劃），並與靜態 MPT、等權重及自選 Benchmark 對照，另提供 PBO/DSR 過擬合檢驗、前向分析 WFA、蒙地卡羅壓力測試與 GK 動態提領分析。所有運算都在你的瀏覽器內完成，資料不會上傳到任何伺服器。</p>
+      <p>本平台重現滾動視窗動態 MPT 優化（二次規劃），並與靜態 MPT、等權重、最小變異數、反波動率及自選 Benchmark 對照，另提供 PBO/DSR 過擬合檢驗、前向分析 WFA、蒙地卡羅壓力測試與 GK 動態提領分析。所有運算都在你的瀏覽器內完成，資料不會上傳到任何伺服器。</p>
       <ol>
         <li>左側「01 資料來源」：預設已自動載入 multi_strategy_data.xlsx，也可上傳自己的 .xlsx（可先下載範例檔參考格式）</li>
         <li>「02」把要納入組合的策略加入「已選」、挑選要比較的 Benchmark，並設定回測起訖日</li>
@@ -580,7 +580,7 @@
       <div class="tab-panel active" id="tab-overview">
         <div class="panel-card">
           <h3>配置績效指標總表</h3>
-          <p class="sub">動態 MPT／靜態 MPT／等權重配置／各 Benchmark 的完整風險報酬指標對照</p>
+          <p class="sub">動態 MPT／靜態 MPT／等權重／最小變異數／反波動率配置／各 Benchmark 的完整風險報酬指標對照</p>
           <div style="overflow-x:auto;">
             <table id="summaryTable">
               <thead><tr>
@@ -680,7 +680,7 @@
         </div>
         <div class="panel-card">
           <h3>逐年報酬比較</h3>
-          <p class="sub" id="yearlySub">各曆年報酬率：動態 MPT／靜態 MPT／等權重配置／各 Benchmark</p>
+          <p class="sub" id="yearlySub">各曆年報酬率：動態 MPT／靜態 MPT／等權重／最小變異數／反波動率配置／各 Benchmark</p>
           <div style="overflow-x:auto;">
             <table id="yearlyTable"><thead><tr></tr></thead><tbody></tbody></table>
           </div>
@@ -997,6 +997,7 @@ function runBacktest(returns, lookback, rebalPeriod, lambda, lb, ub, maxLev){
   const numEval=T-lookback;
   if(numEval<=1) throw new Error('滾動回顧視窗超過資料長度，請縮小視窗');
   const dyn=new Array(numEval).fill(0), sta=new Array(numEval).fill(0), ew=new Array(numEval).fill(0);
+  const mv=new Array(numEval).fill(0), iv=new Array(numEval).fill(0);
   const wHistDyn=Array.from({length:numEval},()=>new Array(N).fill(0));
   const rebalanceLog=[];
 
@@ -1007,6 +1008,8 @@ function runBacktest(returns, lookback, rebalPeriod, lambda, lb, ub, maxLev){
   let curDyn=new Array(N).fill(maxLev/N);
   let curSta=wStatic.slice();
   let curEw=new Array(N).fill(1/N);
+  let curMv=new Array(N).fill(maxLev/N), curIv=new Array(N).fill(maxLev/N);
+  const zeroMu=new Array(N).fill(0);
 
   for(let i=lookback;i<T;i++){
     const idx=i-lookback;
@@ -1017,18 +1020,27 @@ function runBacktest(returns, lookback, rebalPeriod, lambda, lb, ub, maxLev){
       if(wOpt) curDyn=wOpt;
       curSta=wStatic.slice();
       curEw=new Array(N).fill(1/N);
+      // 不使用預期報酬的兩個基準：最小變異數（同上下限/槓桿限制）與反波動率加權
+      const wMv=solveQP(zeroMu, sigma, lb, ub, maxLev, 1);
+      if(wMv) curMv=wMv;
+      const ivRaw=sigma.map((row,j)=>1/Math.sqrt(Math.max(row[j],1e-12)));
+      const ivSum=ivRaw.reduce((a,b)=>a+b,0);
+      const sumLbB=lb.reduce((a,b)=>a+b,0), sumUbB=ub.reduce((a,b)=>a+b,0);
+      if(sumLbB<=maxLev+1e-6 && sumUbB>=maxLev-1e-6) curIv=projectSumBox(ivRaw.map(x=>x/ivSum*maxLev), lb, ub, maxLev);
       rebalanceLog.push({idx, weights:curDyn.slice(), solved: !!wOpt});
     }
     const today=returns[i];
     wHistDyn[idx]=curDyn.slice();
-    let rDyn=0, rSta=0, rEw=0;
-    for(let j=0;j<N;j++){ rDyn+=curDyn[j]*today[j]; rSta+=curSta[j]*today[j]; rEw+=curEw[j]*today[j]; }
-    dyn[idx]=rDyn; sta[idx]=rSta; ew[idx]=rEw;
+    let rDyn=0, rSta=0, rEw=0, rMv=0, rIv=0;
+    for(let j=0;j<N;j++){ rDyn+=curDyn[j]*today[j]; rSta+=curSta[j]*today[j]; rEw+=curEw[j]*today[j]; rMv+=curMv[j]*today[j]; rIv+=curIv[j]*today[j]; }
+    dyn[idx]=rDyn; sta[idx]=rSta; ew[idx]=rEw; mv[idx]=rMv; iv[idx]=rIv;
     curDyn=curDyn.map((w,j)=>w*(1+today[j])/(1+rDyn));
     curSta=curSta.map((w,j)=>w*(1+today[j])/(1+rSta));
     curEw=curEw.map((w,j)=>w*(1+today[j])/(1+rEw));
+    curMv=curMv.map((w,j)=>w*(1+today[j])/(1+rMv));
+    curIv=curIv.map((w,j)=>w*(1+today[j])/(1+rIv));
   }
-  return {dyn, sta, ew, wHistDyn, wStatic, numEval, rebalanceLog};
+  return {dyn, sta, ew, mv, iv, wHistDyn, wStatic, numEval, rebalanceLog};
 }
 
 function runFastBacktest(returns, winLen, lambda, rebalPeriod, maxLev, lb, ub, maxLookbackAlign, stats){
@@ -2088,6 +2100,8 @@ function runPipeline(){
     const dynMetrics=computeMetrics(bt.dyn, tradingDays, riskFree);
     const staMetrics=computeMetrics(bt.sta, tradingDays, riskFree);
     const ewMetrics=computeMetrics(bt.ew, tradingDays, riskFree);
+    const mvMetrics=computeMetrics(bt.mv, tradingDays, riskFree);
+    const ivMetrics=computeMetrics(bt.iv, tradingDays, riskFree);
 
     const evalStartIdx=P.returns.length-bt.numEval;
     const evalDates=P.dates.slice(evalStartIdx);
@@ -2146,7 +2160,7 @@ function runPipeline(){
     }
 
     renderResults({
-      P, B, bt, dynMetrics, staMetrics, ewMetrics, bmList,
+      P, B, bt, dynMetrics, staMetrics, ewMetrics, mvMetrics, ivMetrics, bmList,
       evalDates, corr, stratStats, pboResult, wfaResult, mcResult, gkResult,
       tradingDays, riskFree, lookback, rebal, maxLev, lambda, lb, ub
     });
@@ -2349,8 +2363,8 @@ function zUI(){
 /* ---- 初始化（每次執行回測後呼叫） ---- */
 function zoomInit(labels, ctx, eqSeries){
   Z.dates=labels; Z.n=labels.length; Z.lo=0; Z.hi=Z.n-1; Z.td=ctx.tradingDays||250;
-  const names=['動態 MPT','靜態 MPT','等權重配置', ...ctx.bmList.map(b=>b.name+'（Benchmark）')];
-  Z.series=eqSeries.map((eq,i)=>({name:names[i], eq, bm:i>=3}));
+  const names=['動態 MPT','靜態 MPT','等權重配置','最小變異數配置','反波動率配置', ...ctx.bmList.map(b=>b.name+'（Benchmark）')];
+  Z.series=eqSeries.map((eq,i)=>({name:names[i], eq, bm:i>=5}));
   Z.eqOrig=charts.eq? charts.eq.data.datasets.map(ds=>ds.data) : null;
   zq('zoomFrom').min=zq('zoomTo').min=labels[0];
   zq('zoomFrom').max=zq('zoomTo').max=labels[labels.length-1];
@@ -2484,17 +2498,19 @@ function summaryRow(label, m, highlight){
 }
 
 function renderSummaryTable(ctx){
-  const {dynMetrics,staMetrics,ewMetrics,bmList}=ctx;
+  const {dynMetrics,staMetrics,ewMetrics,mvMetrics,ivMetrics,bmList}=ctx;
   let rows='';
   rows+=summaryRow('動態 MPT', dynMetrics);
   rows+=summaryRow('靜態 MPT', staMetrics);
   rows+=summaryRow('等權重配置', ewMetrics);
+  rows+=summaryRow('最小變異數配置', mvMetrics);
+  rows+=summaryRow('反波動率配置', ivMetrics);
   bmList.forEach(b=> rows+=summaryRow(b.name+'（Benchmark）', b.metrics, true));
   document.querySelector('#summaryTable tbody').innerHTML=rows;
 }
 
 function renderOverviewTab(ctx){
-  const {bt,dynMetrics,staMetrics,ewMetrics,bmList,evalDates,P,B}=ctx;
+  const {bt,dynMetrics,staMetrics,ewMetrics,mvMetrics,ivMetrics,bmList,evalDates,P,B}=ctx;
   const labels=evalDates.map(d=>fmtDate(d));
 
   renderSummaryTable(ctx);
@@ -2505,6 +2521,8 @@ function renderOverviewTab(ctx){
       {label:'動態 MPT', data:dynMetrics.equity, borderColor:'#45C4A0', borderWidth:2, pointRadius:0},
       {label:'靜態 MPT', data:staMetrics.equity, borderColor:'#D9A54B', borderWidth:1.3, pointRadius:0},
       {label:'等權重配置', data:ewMetrics.equity, borderColor:'#5B9BD9', borderWidth:1.1, pointRadius:0},
+      {label:'最小變異數配置', data:mvMetrics.equity, borderColor:'#B58AE0', borderWidth:1, pointRadius:0, borderDash:[5,3]},
+      {label:'反波動率配置', data:ivMetrics.equity, borderColor:'#E58BB4', borderWidth:1, pointRadius:0, borderDash:[5,3]},
       ...bmList.map((b,j)=>({label:b.name, data:b.metrics.equity, borderColor:bmPalette[j%bmPalette.length], borderWidth:1, pointRadius:0}))
     ]},
     options:{
@@ -2524,6 +2542,8 @@ function renderOverviewTab(ctx){
       {label:'動態 MPT', data:dynMetrics.dd.map(x=>x*100), borderColor:'#45C4A0', borderWidth:1.6, pointRadius:0, fill:false},
       {label:'靜態 MPT', data:staMetrics.dd.map(x=>x*100), borderColor:'#D9A54B', borderWidth:1, pointRadius:0, fill:false},
       {label:'等權重配置', data:ewMetrics.dd.map(x=>x*100), borderColor:'#5B9BD9', borderWidth:1, pointRadius:0, fill:false},
+      {label:'最小變異數配置', data:mvMetrics.dd.map(x=>x*100), borderColor:'#B58AE0', borderWidth:1, pointRadius:0, fill:false, borderDash:[5,3]},
+      {label:'反波動率配置', data:ivMetrics.dd.map(x=>x*100), borderColor:'#E58BB4', borderWidth:1, pointRadius:0, fill:false, borderDash:[5,3]},
       ...bmList.map((b,j)=>({label:b.name, data:b.metrics.dd.map(x=>x*100), borderColor:bmPalette[j%bmPalette.length], borderWidth:1, pointRadius:0, fill:false}))
     ]},
     options:{
@@ -2552,7 +2572,7 @@ function renderOverviewTab(ctx){
     }
   });
 
-  zoomInit(labels, ctx, [dynMetrics.equity, staMetrics.equity, ewMetrics.equity, ...bmList.map(b=>b.metrics.equity)]);
+  zoomInit(labels, ctx, [dynMetrics.equity, staMetrics.equity, ewMetrics.equity, mvMetrics.equity, ivMetrics.equity, ...bmList.map(b=>b.metrics.equity)]);
 
   const staTbody=document.querySelector('#staticTable tbody');
   staTbody.innerHTML=P.names.map((name,i)=>`<tr><td>${name}</td><td>${fmtPct(bt.wStatic[i])}</td></tr>`).join('');
@@ -2568,6 +2588,8 @@ function renderYearlyReturns(ctx){
     {name:'動態 MPT', rets:bt.dyn, color:'#45C4A0'},
     {name:'靜態 MPT', rets:bt.sta, color:'#D9A54B'},
     {name:'等權重配置', rets:bt.ew, color:'#5B9BD9'},
+    {name:'最小變異數配置', rets:bt.mv, color:'#B58AE0'},
+    {name:'反波動率配置', rets:bt.iv, color:'#E58BB4'},
     ...bmList.map((b,j)=>({name:b.name+'（Benchmark）', rets:b.slice, color:bmPalette[j%bmPalette.length], bm:true}))
   ];
   const years=[...new Set(evalDates.map(d=>d.getUTCFullYear()))];
