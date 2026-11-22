@@ -31,6 +31,12 @@
   ::selection{background:var(--teal);color:#0E1116;}
 
   #app{display:flex;min-height:100vh;}
+  @media(max-width:820px){
+    #app{flex-direction:column;}
+    #sidebar{width:auto;min-width:0;height:auto;position:static;border-right:0;border-bottom:1px solid var(--border);}
+    #main{padding:20px 14px 48px;}
+    #main table{display:block;max-width:100%;overflow-x:auto;}
+  }
 
   /* ---------- SIDEBAR ---------- */
   #sidebar{
@@ -74,6 +80,8 @@
   select:focus, input:focus{outline:none;border-color:var(--teal);}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .field-hint{font-size:10.5px;color:var(--text-faint);margin-top:3px;}
+  .notice{margin:12px 0 4px;padding:8px 10px;border:1px solid var(--amber);border-radius:6px;background:rgba(217,165,75,.08);color:var(--amber);font-size:11.5px;line-height:1.55;}
+  .notice b{font-weight:600;}
 
   .strat-row{display:grid;grid-template-columns:1fr 62px 62px;gap:6px;align-items:center;margin-bottom:7px;}
   .strat-row .sname{font-size:11.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -261,6 +269,7 @@
       <div class="mark">MULTI-STRATEGY ALLOCATION LAB</div>
       <h1>動態 MPT 資產配置<br>回測平台</h1>
       <p>上傳策略日報酬 Excel，設定滾動優化參數，執行含過擬合檢驗與蒙地卡羅壓力測試的完整回測。</p>
+      <div class="notice"><b>僅供研究與教育用途，不構成投資建議。</b>所有結果皆為歷史回測，不代表未來績效，且未計入交易成本、滑價與稅負；投資決策與風險請自行負責。</div>
     </div>
 
     <div class="side-section">
@@ -270,6 +279,7 @@
         <input type="file" id="fileInput" accept=".xlsx,.xls">
         <span>📤 上傳 / 更換 Excel</span>
       </div>
+      <div class="field-hint" style="margin:6px 0 4px">預設資料為作者自行整理的範例策略／Benchmark 日報酬，僅供示範，不保證完整或正確，也非任何資料商的官方數據；請勿當作交易依據或轉載。上傳的檔案只在你的瀏覽器內處理，不會傳到任何伺服器。</div>
       <button type="button" class="dl-btn" id="sampleDlBtn" title="下載範例 Excel，作為自己資料的格式參考">📥 下載範例檔 multi_strategy_data.xlsx</button>
       <div class="field-hint">預設自動載入 multi_strategy_data.xlsx；想暫時用別份資料測試，可點上方按鈕上傳或拖曳 .xlsx 覆蓋（僅本次瀏覽有效，要更新預設資料請把新檔案上傳取代 GitHub repo 裡的 multi_strategy_data.xlsx）</div>
 
@@ -559,6 +569,7 @@
     </div>
 
     <div id="results" style="display:none;">
+      <div class="notice" style="margin:0 0 12px">以下為歷史回測結果，不代表未來績效，不構成投資建議。</div>
       <div class="topbar">
         <div>
           <h2 id="resTitle">回測結果</h2>
